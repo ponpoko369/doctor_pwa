@@ -152,6 +152,34 @@ let _firstRender = true;
 // clicks the 수정 button.
 const _rowsById = new Map();
 
+// Spanish-symptom → Korean-translation cache. Built lazily by hitting
+// /api/translate after each render and persisted to localStorage so the
+// translation cost is paid once per unique symptom string, ever.
+const _symptomsKoCache = new Map();
+const _KO_CACHE_STORAGE_KEY = 'doctorpwa-symptoms-ko-v1';
+let _translationLoopRunning = false;
+
+function loadKoCacheFromStorage() {
+    try {
+        const raw = localStorage.getItem(_KO_CACHE_STORAGE_KEY);
+        if (!raw) return;
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === 'object') {
+            for (const [k, v] of Object.entries(obj)) {
+                if (typeof v === 'string') _symptomsKoCache.set(k, v);
+            }
+        }
+    } catch (_) { /* corrupt cache → ignore, will rebuild */ }
+}
+
+function saveKoCacheToStorage() {
+    try {
+        const obj = {};
+        for (const [k, v] of _symptomsKoCache) obj[k] = v;
+        localStorage.setItem(_KO_CACHE_STORAGE_KEY, JSON.stringify(obj));
+    } catch (_) { /* quota or private mode → degrade silently */ }
+}
+
 function render({ rows }) {
     const tbody = document.getElementById('appt-body');
 
@@ -211,16 +239,21 @@ function render({ rows }) {
         // data-* lets the delegated click handler open the right viewer.
         const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
         // data-search holds a diacritic-stripped lowercased haystack the
-        // live filter scans against (name + phone + symptoms). Normalized
-        // once at render so the input handler can use a single .includes()
-        // per row, and so Spanish accents don't break partial matches
-        // (e.g. "inflamación" remains findable by "inflamacion").
+        // live filter scans against (name + phone + symptoms + cached KO
+        // translation). Normalized once at render so the input handler can
+        // use a single .includes() per row, and so Spanish accents don't
+        // break partial matches (e.g. "inflamación" remains findable by
+        // "inflamacion"). data-appt-id lets the lazy translation pass
+        // locate this row to update the haystack when KO translation lands.
         const phoneRaw    = (a.patients && a.patients.phone)    ? a.patients.phone    : '';
-        const symptomsRawForSearch = (a.patients && a.patients.symptoms) ? a.patients.symptoms : '';
-        const searchHaystack = [name, phoneRaw, symptomsRawForSearch]
+        const symptomsRawForSearch = (a.patients && a.patients.symptoms) ? a.patients.symptoms.trim() : '';
+        const symptomsKoCached = symptomsRawForSearch
+            ? (_symptomsKoCache.get(symptomsRawForSearch) || '')
+            : '';
+        const searchHaystack = [name, phoneRaw, symptomsRawForSearch, symptomsKoCached]
             .map(normalizeForSearch)
             .join(' ');
-        return `<tr class="${cls.join(' ')}" data-viewer-url="${viewerHref}" data-search="${escapeHtml(searchHaystack)}">
+        return `<tr class="${cls.join(' ')}" data-appt-id="${escapeHtml(a.id)}" data-viewer-url="${viewerHref}" data-search="${escapeHtml(searchHaystack)}">
             <td class="time-col">${formatTimeLabel(dt, now)}</td>
             <td class="name-col">${nameCell}</td>
             <td class="visit-col"><span class="visit-badge">${a.visitNumber}회</span></td>
@@ -231,6 +264,12 @@ function render({ rows }) {
     // Reapply any active search filter to the freshly painted rows so
     // a 60s auto-refresh doesn't reveal hidden rows behind the filter.
     applySearchFilter(currentSearchQuery());
+
+    // Lazy KO translation for new (uncached) symptoms — runs in
+    // background, doesn't block the doctor's view of the table. Safe to
+    // call after every render; the loop self-guards against re-entry and
+    // skips already-cached strings.
+    processTranslationQueue();
 }
 
 // ---------- live search filter ----------
@@ -284,6 +323,96 @@ function applySearchFilter(rawQuery) {
 function currentSearchQuery() {
     const input = document.getElementById('search-input');
     return input ? input.value : '';
+}
+
+// ---------- lazy KO translation of symptoms (for search only) -----------
+// Whenever render() finishes, we kick this off in the background. It
+// walks the current rows, finds unique non-empty Spanish symptoms with no
+// cached KO translation yet, and translates them via /api/translate. As
+// each translation lands, the matching rows' data-search haystacks are
+// rebuilt so Korean keyword search starts working incrementally — no
+// need to wait for the full batch.
+async function translateOneSymptom(spanish) {
+    const resp = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: spanish }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    const ko = (data.translation || '').trim();
+    if (!ko) throw new Error('empty translation');
+    return ko;
+}
+
+// Rebuild a single row's data-search now that we know its KO translation.
+// Same shape as the render-time haystack so search behavior is identical.
+function refreshRowHaystack(apptId, koOverride) {
+    const row = _rowsById.get(apptId);
+    if (!row) return;
+    const tr = document.querySelector(`#appt-body tr[data-appt-id="${CSS.escape(apptId)}"]`);
+    if (!tr) return;
+    const p = row.patients || {};
+    const symptoms = (p.symptoms || '').trim();
+    const ko = koOverride != null
+        ? koOverride
+        : (symptoms ? (_symptomsKoCache.get(symptoms) || '') : '');
+    const haystack = [p.name || '', p.phone || '', symptoms, ko]
+        .map(normalizeForSearch)
+        .join(' ');
+    tr.dataset.search = haystack;
+}
+
+async function processTranslationQueue() {
+    if (_translationLoopRunning) return;
+    _translationLoopRunning = true;
+    try {
+        // Collect unique Spanish symptom strings that need translation.
+        const queue = [];
+        const seen = new Set();
+        for (const row of _rowsById.values()) {
+            const s = (row.patients && row.patients.symptoms) ? row.patients.symptoms.trim() : '';
+            if (!s || seen.has(s) || _symptomsKoCache.has(s)) continue;
+            seen.add(s);
+            queue.push(s);
+        }
+        if (queue.length === 0) return;
+
+        // Small worker pool — Claude haiku is fast (~1-2s) but we still
+        // don't want 50 in-flight calls from one tab.
+        const CONCURRENCY = 4;
+        let nextIdx = 0;
+        let savedCount = 0;
+        async function worker() {
+            while (nextIdx < queue.length) {
+                const spanish = queue[nextIdx++];
+                try {
+                    const ko = await translateOneSymptom(spanish);
+                    _symptomsKoCache.set(spanish, ko);
+                    // Update every row that shares this symptom string.
+                    for (const row of _rowsById.values()) {
+                        const s = (row.patients && row.patients.symptoms)
+                            ? row.patients.symptoms.trim() : '';
+                        if (s === spanish) refreshRowHaystack(row.id, ko);
+                    }
+                    // Re-apply current filter so live results refresh as
+                    // KO becomes available — important when the doctor
+                    // typed a Korean query before all translations finished.
+                    applySearchFilter(currentSearchQuery());
+                    // Persist every few completions so a tab close doesn't
+                    // throw away work-in-progress translations.
+                    if (++savedCount % 4 === 0) saveKoCacheToStorage();
+                } catch (e) {
+                    console.warn('[ko-search] translate failed for symptom:', e.message);
+                }
+            }
+        }
+        const workers = Array.from({ length: CONCURRENCY }, worker);
+        await Promise.all(workers);
+        saveKoCacheToStorage();
+    } finally {
+        _translationLoopRunning = false;
+    }
 }
 
 function scrollToToday(behavior) {
@@ -659,6 +788,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(tickClock, 1000);
     modalInit();
     manageModalInit();
+    loadKoCacheFromStorage();
 
     document.getElementById('btn-refresh').addEventListener('click', refresh);
     document.getElementById('btn-today').addEventListener('click', () => scrollToToday('smooth'));
