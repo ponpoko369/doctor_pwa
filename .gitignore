@@ -1,1 +1,3 @@
 .vercel
+.env*
+_key.tmp
