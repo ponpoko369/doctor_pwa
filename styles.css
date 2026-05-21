@@ -1,0 +1,250 @@
+:root {
+    --primary: #2563EB;
+    --primary-dark: #1D4ED8;
+    --bg: #F8FAFC;
+    --card: #FFFFFF;
+    --text: #1E293B;
+    --text-light: #64748B;
+    --border: #E2E8F0;
+    --highlight: #FEF3C7;
+    --highlight-border: #F59E0B;
+    --past: #F1F5F9;
+    --shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    min-height: 100dvh;
+}
+
+.topbar {
+    background: var(--card);
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    box-shadow: var(--shadow);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.topbar h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.topbar .subtitle {
+    font-size: 0.875rem;
+    color: var(--text-light);
+    margin-top: 0.15rem;
+}
+
+.topbar-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.15rem;
+}
+
+.clock {
+    font-size: 1.25rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--primary);
+}
+
+.last-refresh {
+    font-size: 0.75rem;
+    color: var(--text-light);
+}
+
+.btn-refresh {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 0.45rem 0.9rem;
+    border-radius: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    margin-top: 0.35rem;
+    transition: background 0.15s ease;
+}
+
+.btn-refresh:hover { background: var(--primary-dark); }
+.btn-refresh:active { transform: scale(0.97); }
+.btn-refresh:disabled { background: var(--text-light); cursor: wait; }
+
+main {
+    padding: 1.5rem;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+.table-wrapper {
+    background: var(--card);
+    border-radius: 0.75rem;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.appt-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 1rem;
+}
+
+.appt-table th {
+    background: var(--bg);
+    text-align: left;
+    padding: 0.85rem 1.25rem;
+    font-weight: 600;
+    border-bottom: 2px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--text-light);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.appt-table .th-visit { text-align: center; }
+
+.appt-table td {
+    padding: 0.95rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+}
+
+.appt-table tr:last-child td { border-bottom: none; }
+
+.appt-table .time-col {
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    color: var(--primary);
+    white-space: nowrap;
+    font-size: 1.05rem;
+}
+
+.appt-table .name-col {
+    font-weight: 500;
+}
+
+.appt-table .visit-col {
+    font-weight: 700;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.appt-table .symptoms-col {
+    color: var(--text);
+    font-size: 0.95rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-width: 380px;
+}
+
+.appt-table .symptoms-col .muted {
+    color: var(--text-light);
+}
+
+/* Give time/visit/diag columns a compact width so the wider symptoms column
+   gets the room it needs without pushing the table off-screen. */
+.appt-table .th-time,
+.appt-table .time-col { width: 1%; }
+.appt-table .th-visit,
+.appt-table .visit-col { width: 1%; }
+.appt-table .th-diag,
+.appt-table .diag-col { width: 1%; white-space: nowrap; text-align: center; }
+
+.btn-diag {
+    display: inline-block;
+    background: var(--primary);
+    color: white;
+    text-decoration: none;
+    padding: 0.4rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    transition: background 0.15s ease;
+}
+.btn-diag:hover { background: var(--primary-dark); }
+.btn-diag:active { transform: scale(0.97); }
+.diag-col .muted { color: var(--text-light); font-size: 0.85rem; }
+
+.visit-badge {
+    display: inline-block;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.2rem 0.7rem;
+    font-size: 0.9rem;
+}
+
+.appt-table tr.past td {
+    color: var(--text-light);
+    background: var(--past);
+}
+
+.appt-table tr.past .time-col {
+    color: var(--text-light);
+}
+
+.appt-table tr.next-up td {
+    background: var(--highlight);
+    box-shadow: inset 3px 0 0 var(--highlight-border);
+}
+
+.appt-table tr.next-up .time-col {
+    color: var(--highlight-border);
+}
+
+.loading, .empty {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: var(--text-light);
+    font-size: 1rem;
+}
+
+.error {
+    text-align: center;
+    padding: 2rem 1rem;
+    color: #DC2626;
+    font-weight: 600;
+    font-size: 0.95rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+@media (max-width: 600px) {
+    .topbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.5rem;
+    }
+    .topbar-right {
+        flex-direction: row;
+        align-items: center;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+    .clock { font-size: 1rem; }
+    main { padding: 1rem; }
+    .appt-table th, .appt-table td { padding: 0.75rem 0.85rem; }
+    .appt-table .time-col { font-size: 0.95rem; }
+}

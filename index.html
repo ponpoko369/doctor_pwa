@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2563EB">
+    <title>의사용 예약 현황</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-left">
+            <h1>예약 현황</h1>
+            <p class="subtitle" id="cutoff-label">3시간 전 이후의 예약 · AI 진단 완료 환자</p>
+        </div>
+        <div class="topbar-right">
+            <div class="clock" id="clock">--:--:--</div>
+            <p class="last-refresh" id="last-refresh">갱신: -</p>
+            <button class="btn-refresh" id="btn-refresh">↻ 새로고침</button>
+        </div>
+    </header>
+
+    <main>
+        <div class="table-wrapper">
+            <table class="appt-table">
+                <thead>
+                    <tr>
+                        <th class="th-time">예약 시간</th>
+                        <th class="th-name">환자 이름</th>
+                        <th class="th-visit">방문 횟수</th>
+                        <th class="th-symptoms">증상</th>
+                        <th class="th-diag">AI 진단</th>
+                    </tr>
+                </thead>
+                <tbody id="appt-body">
+                    <tr><td colspan="5" class="loading">불러오는 중...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <script src="supabase.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

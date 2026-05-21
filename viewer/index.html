@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>AI 진단 결과 - 3D 침자리</title>
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+  <style>
+    html, body { margin:0; padding:0; height:100%; background:#0F1320; overflow:hidden; color:#E4ECF8;
+                 font-family:'Inter','Segoe UI',sans-serif; }
+    /* Layout: left side panel (diagnosis text) + main canvas area */
+    #app { display:flex; height:100vh; height:100dvh; }
+    #sidebar {
+      width: 320px; flex: 0 0 320px;
+      background:#0F1320; border-right:1px solid #1F2940;
+      padding: 12px; overflow-y:auto;
+      font-size: 12px; line-height: 1.45;
+    }
+    #stage { flex:1; position:relative; background:#0F1320; }
+    #stage canvas { display:block; }
+    #status {
+      position:absolute; left:8px; bottom:8px;
+      font:11px Consolas, monospace; color:#7EC8E3;
+      background:rgba(0,0,0,0.5); padding:3px 8px; border-radius:3px;
+      pointer-events:none;
+    }
+    /* top bar */
+    .topbar {
+      position:absolute; top:0; left:0; right:0;
+      display:flex; align-items:center; gap:8px;
+      padding: 8px 10px;
+      background: rgba(15, 19, 32, 0.82);
+      border-bottom: 1px solid #1F2940;
+      font-size: 12px;
+      z-index: 5;
+    }
+    .topbar .title { font-weight:600; color:#E4ECF8; }
+    .topbar .meta  { color:#7A8CAA; font-size:11px; }
+    .topbar .spacer { flex: 1; }
+    .topbar button {
+      background:#1F2940; color:#E4ECF8; border:none;
+      padding: 6px 10px; border-radius:4px; cursor:pointer; font: inherit;
+    }
+    .topbar button:hover { background:#2960C8; }
+    .topbar button:disabled { color:#445270; cursor:default; background:#1F2940; }
+    /* sidebar */
+    .sb-header { color:#00DDFF; font-weight:700; margin-bottom: 6px; font-size: 12px; }
+    .sb-pattern { color:#E4ECF8; margin-bottom: 14px; }
+    .sb-section { margin-bottom: 14px; }
+    .sb-section h4 {
+      font-size: 11px; font-weight:700; margin: 4px 0 6px;
+      display:flex; align-items:center; gap:6px;
+    }
+    .sb-section h4 .dot {
+      width: 8px; height: 8px; border-radius:50%; display:inline-block;
+    }
+    .acu-row { display:flex; gap:8px; padding: 3px 0; align-items:flex-start; font-size:11px; }
+    .acu-row .id {
+      flex: 0 0 60px; padding: 2px 4px; border-radius:3px;
+      font-family: Consolas, monospace; font-size:10px; font-weight:700; text-align:center;
+    }
+    .acu-row .reason { flex:1; color:#E4ECF8; }
+    /* loading / error */
+    .center-msg {
+      position:absolute; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      color:#A8B6CF; font-size: 13px; padding: 24px; text-align:center;
+    }
+    .center-msg.err { color: #FF8888; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sb-content">불러오는 중…</div>
+    </aside>
+    <div id="stage">
+      <div class="topbar">
+        <span class="title" id="topbar-name">환자</span>
+        <span class="meta"  id="topbar-meta"></span>
+        <span class="spacer"></span>
+        <button id="btn-tour" disabled>🎬 투어</button>
+        <button id="btn-back">← 돌아가기</button>
+      </div>
+      <div id="status">3D 모델 로딩…</div>
+    </div>
+  </div>
+
+  <script src="three/build/three.js"></script>
+  <script src="three/loaders/OBJLoader.js"></script>
+  <script src="three/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script>
+    // ============== Supabase + diagnosis loader =========================
+    // Anon key — same project as the rest of the app (see supabase.js).
+    const SUPABASE_URL = 'https://cojzdjajwrzzyqxzljgq.supabase.co';
+    const SUPABASE_ANON_KEY = 'sb_publishable_nx3OwIicQ0TcvHQvf1xSsA_akcvr4vB';
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const params = new URLSearchParams(location.search);
+    const patientId   = params.get('patientId');
+    const diagnosisId = params.get('diagnosisId');   // optional, overrides "latest"
+    const patientName = params.get('name') || '환자';
+
+    document.getElementById('topbar-name').textContent = patientName;
+    document.getElementById('btn-back').onclick = () => history.back();
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+      }[c]));
+    }
+
+    function renderSidebar(d) {
+      const sb = document.getElementById('sb-content');
+      // tier styling matches the 3D scene colors below
+      const tiers = [
+        { label: '주요 혈자리', dot: '#FF6464', list: d.primary_points   || [] },
+        { label: '보조 혈자리', dot: '#FFAA50', list: d.secondary_points || [] },
+        { label: '보완 혈자리', dot: '#FFE060', list: d.tertiary_points  || [] },
+      ];
+      const patternKo = d.pattern_ko || d.pattern || '(진단 없음)';
+      let html =
+        '<div class="sb-header">▌ MTC 패턴 (AI)</div>' +
+        '<div class="sb-pattern">' + escapeHtml(patternKo) + '</div>';
+      for (const t of tiers) {
+        if (!t.list.length) continue;
+        html += '<div class="sb-section"><h4>'
+              + '<span class="dot" style="background:'+t.dot+'"></span>'
+              + escapeHtml(t.label) + ' (' + t.list.length + ')</h4>';
+        for (const r of t.list) {
+          const reasonKo = r.reason_ko || r.reason || '—';
+          html += '<div class="acu-row">'
+                + '<span class="id" style="color:'+t.dot+';border:1px solid '+t.dot+'88;background:'+t.dot+'22">' + escapeHtml(r.id) + '</span>'
+                + '<span class="reason">' + escapeHtml(reasonKo) + '</span>'
+                + '</div>';
+        }
+        html += '</div>';
+      }
+      sb.innerHTML = html;
+    }
+
+    function renderSidebarError(msg) {
+      const el = document.getElementById('sb-content');
+      el.innerHTML = '<div class="sb-header" style="color:#FF8888">▌ 오류</div>'
+                   + '<div style="color:#FFB8B8;white-space:pre-wrap">' + escapeHtml(msg) + '</div>';
+    }
+
+    async function fetchDiagnosis() {
+      if (!patientId && !diagnosisId) {
+        throw new Error('patientId 또는 diagnosisId 가 필요합니다.');
+      }
+      // Specific diagnosis row wins if both provided.
+      let q = sb.from('ai_diagnoses').select('*');
+      if (diagnosisId) q = q.eq('id', diagnosisId);
+      else             q = q.eq('patient_id', patientId)
+                            .order('created_at', { ascending: false })
+                            .limit(1);
+      const { data, error } = await q;
+      if (error) throw new Error('Supabase: ' + error.message);
+      if (!data || data.length === 0) throw new Error('이 환자의 AI 진단 결과가 없습니다.');
+      return data[0];
+    }
+
+    // ============== Three.js scene (same as Flutter's acu_viewer.html) ==
+    const stageEl = document.getElementById('stage');
+    const statusEl = document.getElementById('status');
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(
+      45, stageEl.clientWidth / stageEl.clientHeight, 0.5, 2000);
+    camera.position.set(0, 0, 250);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setClearColor(0x0F1320, 1);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(stageEl.clientWidth, stageEl.clientHeight);
+    stageEl.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.minDistance = 100;
+    controls.maxDistance = 700;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.1;
+
+    scene.add(new THREE.AmbientLight(0x202040));
+    const lightFront = new THREE.DirectionalLight(0xffeedd, 1.0);
+    lightFront.position.set(0, 0, 1);
+    scene.add(lightFront);
+    const lightBack = new THREE.DirectionalLight(0xffeedd, 1.0);
+    lightBack.position.set(0, 0, -1);
+    scene.add(lightBack);
+
+    // ---- Acupoint registry --------------------------------------------
+    const acuRegistry = {};
+    const baseGeom = new THREE.SphereGeometry(0.4, 16, 16);
+    const TIER_STYLE = {
+      idle:      { color: 0x00aaff, emissive: 0x000000, scale: 1.0, pulse: 0.0 },
+      primary:   { color: 0xff3030, emissive: 0xff0000, scale: 2.2, pulse: 1.0 },
+      secondary: { color: 0xffaa30, emissive: 0xff8800, scale: 1.8, pulse: 0.6 },
+      tertiary:  { color: 0xffee60, emissive: 0xaa8800, scale: 1.5, pulse: 0.35 },
+    };
+
+    function makePointMesh(name, x, y, z) {
+      const mat = new THREE.MeshLambertMaterial({
+        color: TIER_STYLE.idle.color,
+        emissive: TIER_STYLE.idle.emissive,
+      });
+      const m = new THREE.Mesh(baseGeom, mat);
+      m.name = name;
+      m.position.set(x, y, z);
+      m.userData.baseScale = TIER_STYLE.idle.scale;
+      m.userData.pulse = 0.0;
+      scene.add(m);
+      return m;
+    }
+    function addAcuPoint(id, x, y, z) {
+      const entry = { meshes: [makePointMesh(id, x, y, z)], tier: 'idle' };
+      const lower = id.toLowerCase();
+      const isCentral = lower.startsWith('vc') || lower.startsWith('gv');
+      if (!isCentral) entry.meshes.push(makePointMesh(id + '_m', -x, y, z));
+      acuRegistry[id] = entry;
+    }
+    function applyTier(id, tier) {
+      const entry = acuRegistry[id];
+      if (!entry) return false;
+      const style = TIER_STYLE[tier] || TIER_STYLE.idle;
+      entry.tier = tier;
+      for (const mesh of entry.meshes) {
+        mesh.material.color.setHex(style.color);
+        mesh.material.emissive.setHex(style.emissive);
+        mesh.userData.baseScale = style.scale;
+        mesh.userData.pulse = style.pulse;
+      }
+      return true;
+    }
+
+    function applyDiagnosisToScene(d) {
+      // Reset
+      for (const id in acuRegistry) applyTier(id, 'idle');
+      const grab = (arr) => (arr || []).map(r => r && r.id).filter(Boolean);
+      const primary   = grab(d.primary_points);
+      const secondary = grab(d.secondary_points);
+      const tertiary  = grab(d.tertiary_points);
+      // Apply in priority order; primary wins over secondary, etc.
+      for (const id of tertiary)  applyTier(id, 'tertiary');
+      for (const id of secondary) applyTier(id, 'secondary');
+      for (const id of primary)   applyTier(id, 'primary');
+      const hit = [...primary, ...secondary, ...tertiary]
+        .filter(id => acuRegistry[id]).length;
+      const total = primary.length + secondary.length + tertiary.length;
+      statusEl.textContent = '진단 적용 · ' + hit + '/' + total + ' 침자리 강조';
+      // arm the tour button
+      const tourBtn = document.getElementById('btn-tour');
+      tourBtn.disabled = total === 0;
+      tourBtn.onclick = () => startTour([...primary, ...secondary, ...tertiary]);
+    }
+
+    // ---- Load body OBJ + points ---------------------------------------
+    let bodyReady = false, pointsReady = false, pendingDiag = null;
+    function maybeApplyPending() {
+      if (bodyReady && pointsReady && pendingDiag) {
+        applyDiagnosisToScene(pendingDiag);
+        pendingDiag = null;
+      }
+    }
+
+    const texture = new THREE.Texture();
+    new THREE.ImageLoader().load('three/textura/UV_Grid_Sm.jpg', (img) => {
+      texture.image = img; texture.needsUpdate = true;
+    });
+
+    new THREE.OBJLoader().load('three/modelo/corpo.obj',
+      (obj) => {
+        obj.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.material = new THREE.MeshLambertMaterial({
+              color: 0xD4A07A, map: texture,
+              emissive: 0x1A0A00, emissiveIntensity: 0.1
+            });
+          }
+        });
+        obj.position.y = -95;
+        scene.add(obj);
+        bodyReady = true;
+        statusEl.textContent = '3D 모델 로드 완료';
+        maybeApplyPending();
+      },
+      undefined,
+      (err) => { statusEl.textContent = '3D 모델 로드 실패: ' + (err.message || err); }
+    );
+
+    fetch('acu_points.json')
+      .then(r => r.json())
+      .then(data => {
+        for (const p of (data.points || [])) addAcuPoint(p.id, p.x, p.y, p.z);
+        pointsReady = true;
+        maybeApplyPending();
+      })
+      .catch(err => { statusEl.textContent = '침자리 데이터 로드 실패: ' + err.message; });
+
+    // ---- Cinematic tour (same logic as the Flutter viewer) ------------
+    const tour = {
+      active: false, paused: false, ids: [], idx: 0,
+      flying: false, flyT: 0, flyDuration: 0.6,
+      fromPos: new THREE.Vector3(), fromTarget: new THREE.Vector3(),
+      toPos:   new THREE.Vector3(), toTarget:   new THREE.Vector3(),
+      holdT: 0, holdMs: 1250,
+      cursorMesh: null, homing: false,
+      homePos: new THREE.Vector3(0,0,250), homeTarget: new THREE.Vector3(0,0,0),
+    };
+    const cursorGeom = new THREE.RingGeometry(1.6, 2.0, 32);
+    const cursorMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: 0.0,
+    });
+    tour.cursorMesh = new THREE.Mesh(cursorGeom, cursorMat);
+    tour.cursorMesh.visible = false; scene.add(tour.cursorMesh);
+
+    function computeStop(id) {
+      const entry = acuRegistry[id];
+      if (!entry || entry.meshes.length === 0) return null;
+      let best = entry.meshes[0];
+      let bestDist = camera.position.distanceTo(best.position);
+      for (let i = 1; i < entry.meshes.length; i++) {
+        const d = camera.position.distanceTo(entry.meshes[i].position);
+        if (d < bestDist) { best = entry.meshes[i]; bestDist = d; }
+      }
+      const target = best.position.clone();
+      const out = new THREE.Vector3(target.x, 0, target.z);
+      if (out.length() < 0.001) out.set(0, 0, 1);
+      out.normalize();
+      const distance = 28;
+      const pos = target.clone().add(out.multiplyScalar(distance));
+      pos.y += 2;
+      return { pos, target };
+    }
+    function tourFlyHome() {
+      tour.flying = true; tour.homing = true; tour.flyT = 0;
+      tour.fromPos.copy(camera.position); tour.fromTarget.copy(controls.target);
+      tour.toPos.copy(tour.homePos);      tour.toTarget.copy(tour.homeTarget);
+      tour.cursorMesh.visible = false;
+    }
+    function tourAdvance() {
+      if (tour.ids.length === 0) { tourStop(); return; }
+      if (tour.idx >= tour.ids.length) { tourFlyHome(); return; }
+      const stop = computeStop(tour.ids[tour.idx]);
+      if (!stop) { tour.idx++; return tourAdvance(); }
+      tour.flying = true; tour.homing = false; tour.flyT = 0;
+      tour.fromPos.copy(camera.position); tour.fromTarget.copy(controls.target);
+      tour.toPos.copy(stop.pos);          tour.toTarget.copy(stop.target);
+      tour.cursorMesh.position.copy(stop.target); tour.cursorMesh.visible = true;
+    }
+    function startTour(idList) {
+      if (!Array.isArray(idList) || idList.length === 0) return;
+      tour.homePos.copy(camera.position); tour.homeTarget.copy(controls.target);
+      tour.ids = idList.slice(); tour.idx = 0;
+      tour.active = true; tour.paused = false; tour.homing = false;
+      controls.enabled = false;
+      tourAdvance();
+    }
+    function tourStop() {
+      tour.active = false; tour.paused = false; tour.flying = false;
+      tour.cursorMesh.visible = false; controls.enabled = true;
+    }
+
+    // ---- Resize + render loop -----------------------------------------
+    window.addEventListener('resize', () => {
+      camera.aspect = stageEl.clientWidth / stageEl.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(stageEl.clientWidth, stageEl.clientHeight);
+    });
+    function smoothstep(t){return t*t*(3-2*t);}
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta(); const t = clock.getElapsedTime();
+      if (tour.active) {
+        if (tour.flying) {
+          tour.flyT += dt / tour.flyDuration;
+          const k = smoothstep(Math.min(1, tour.flyT));
+          camera.position.lerpVectors(tour.fromPos, tour.toPos, k);
+          controls.target.lerpVectors(tour.fromTarget, tour.toTarget, k);
+          camera.lookAt(controls.target);
+          if (tour.flyT >= 1) {
+            tour.flying = false;
+            if (tour.homing) tourStop();
+            else             tour.holdT = 0;
+          }
+        } else if (!tour.paused) {
+          tour.holdT += dt * 1000;
+          if (tour.holdT >= tour.holdMs) { tour.idx++; tourAdvance(); }
+        }
+        if (tour.cursorMesh.visible) {
+          tour.cursorMesh.material.opacity = 0.55 + 0.45 * Math.sin(t * 6.0) * 0.5;
+          tour.cursorMesh.lookAt(camera.position);
+        }
+      } else {
+        controls.update();
+      }
+      for (const id in acuRegistry) {
+        const entry = acuRegistry[id];
+        for (const mesh of entry.meshes) {
+          const base = mesh.userData.baseScale || 1.0;
+          const amp  = mesh.userData.pulse || 0.0;
+          const s = base * (1.0 + amp * 0.18 * Math.sin(t * 4.0));
+          mesh.scale.set(s, s, s);
+        }
+      }
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // ============== boot: pull diagnosis, push to scene =================
+    fetchDiagnosis()
+      .then((d) => {
+        // Topbar meta: date of this diagnosis
+        try {
+          const dt = new Date(d.created_at);
+          const pad = n => String(n).padStart(2, '0');
+          document.getElementById('topbar-meta').textContent =
+            '진단일: ' + dt.getFullYear() + '-' + pad(dt.getMonth()+1) + '-' + pad(dt.getDate())
+            + ' ' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
+        } catch (_) {}
+        renderSidebar(d);
+        if (bodyReady && pointsReady) applyDiagnosisToScene(d);
+        else                          pendingDiag = d;
+      })
+      .catch((e) => {
+        console.error(e);
+        renderSidebarError(e.message || String(e));
+        statusEl.textContent = '진단 데이터를 불러오지 못했습니다.';
+      });
+  </script>
+</body>
+</html>
