@@ -243,29 +243,84 @@ function onTableClick(e) {
     window.open(url, '_blank', 'noopener');
 }
 
-// ---------- soft-delete an appointment ----------
-// Sets status='cancelled' rather than physically removing the row — the
-// existing dashboard already filters by status='confirmed', so the row
-// disappears from view but stays in the DB for audit/recovery. RLS
-// already allows anon UPDATE on appointments (verified via PATCH probe).
-async function deleteAppointment(apptId, name) {
+// ---------- delete-an-appointment modal ----------
+// The doctor picks between two semantics:
+//   * hard  → DELETE the row (physical, irreversible)
+//   * soft  → UPDATE status='cancelled' (row stays in DB, hidden by the
+//             dashboard's status='confirmed' filter)
+// Both are allowed by current RLS on the appointments table (probed
+// with insert+delete and patch round-trips before shipping this UI).
+const deleteModal = {
+    el: null, subtitleEl: null, errEl: null,
+    softBtn: null, hardBtn: null, cancelBtn: null, closeBtn: null,
+    apptId: '', name: '',
+};
+
+function deleteModalInit() {
+    deleteModal.el         = document.getElementById('delete-modal');
+    deleteModal.subtitleEl = document.getElementById('delete-modal-subtitle');
+    deleteModal.errEl      = document.getElementById('delete-modal-error');
+    deleteModal.softBtn    = document.getElementById('btn-soft-delete');
+    deleteModal.hardBtn    = document.getElementById('btn-hard-delete');
+    deleteModal.cancelBtn  = document.getElementById('btn-delete-cancel');
+    deleteModal.closeBtn   = document.getElementById('delete-modal-close');
+
+    deleteModal.softBtn.addEventListener('click',   () => performDelete('soft'));
+    deleteModal.hardBtn.addEventListener('click',   () => performDelete('hard'));
+    deleteModal.cancelBtn.addEventListener('click', closeDeleteModal);
+    deleteModal.closeBtn.addEventListener('click',  closeDeleteModal);
+    deleteModal.el.addEventListener('click', (e) => {
+        if (e.target === deleteModal.el) closeDeleteModal();
+    });
+}
+
+function openDeleteModal(apptId, name) {
     if (!apptId) return;
-    const ok = confirm(
-        `'${name}' 환자의 예약을 삭제할까요?\n\n`
-        + '화면에서 사라지지만 DB에는 ‘취소됨(cancelled)’ 상태로 남습니다.'
-    );
-    if (!ok) return;
+    deleteModal.apptId = apptId;
+    deleteModal.name = name || '';
+    deleteModal.subtitleEl.textContent = deleteModal.name;
+    deleteModal.errEl.hidden = true;
+    deleteModal.errEl.textContent = '';
+    setDeleteButtonsDisabled(false);
+    deleteModal.el.hidden = false;
+}
+
+function closeDeleteModal() {
+    deleteModal.el.hidden = true;
+    deleteModal.apptId = '';
+}
+
+function setDeleteButtonsDisabled(disabled) {
+    [deleteModal.softBtn, deleteModal.hardBtn, deleteModal.cancelBtn]
+        .forEach(b => b.disabled = !!disabled);
+}
+
+async function performDelete(kind) {
+    const apptId = deleteModal.apptId;
+    if (!apptId) return;
+    setDeleteButtonsDisabled(true);
+    // Visual hint that something is happening — the user picked irreversible
+    // and we don't want a confusing pause without feedback.
+    const targetBtn = kind === 'hard' ? deleteModal.hardBtn : deleteModal.softBtn;
+    const originalLabel = targetBtn.textContent;
+    targetBtn.textContent = '처리 중…';
     try {
         const client = await initSupabase();
-        const { error } = await client
-            .from('appointments')
-            .update({ status: 'cancelled' })
-            .eq('id', apptId);
+        let error;
+        if (kind === 'hard') {
+            ({ error } = await client.from('appointments').delete().eq('id', apptId));
+        } else {
+            ({ error } = await client.from('appointments').update({ status: 'cancelled' }).eq('id', apptId));
+        }
         if (error) throw error;
+        closeDeleteModal();
         await refresh();
     } catch (e) {
         console.error(e);
-        alert('삭제 실패: ' + ((e && e.message) ? e.message : e));
+        deleteModal.errEl.hidden = false;
+        deleteModal.errEl.textContent = '삭제 실패: ' + ((e && e.message) ? e.message : e);
+        targetBtn.textContent = originalLabel;
+        setDeleteButtonsDisabled(false);
     }
 }
 
@@ -287,7 +342,9 @@ function modalInit() {
     document.getElementById('symptom-modal-close').addEventListener('click', closeModal);
     modal.el.addEventListener('click', (e) => { if (e.target === modal.el) closeModal(); });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !modal.el.hidden) closeModal();
+        if (e.key !== 'Escape') return;
+        if (!modal.el.hidden)       closeModal();
+        if (!deleteModal.el.hidden) closeDeleteModal();
     });
     modal.translateBtn.addEventListener('click', toggleTranslation);
 }
@@ -362,6 +419,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tickClock();
     setInterval(tickClock, 1000);
     modalInit();
+    deleteModalInit();
 
     document.getElementById('btn-refresh').addEventListener('click', refresh);
     document.getElementById('btn-today').addEventListener('click', () => scrollToToday('smooth'));
@@ -379,7 +437,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = e.target.closest('.btn-delete');
         if (!btn) return;
         e.stopPropagation();
-        deleteAppointment(btn.dataset.apptId || '', btn.dataset.name || '');
+        openDeleteModal(btn.dataset.apptId || '', btn.dataset.name || '');
     });
 
     refresh();

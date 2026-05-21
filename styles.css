@@ -395,6 +395,67 @@ main {
 .btn-translate:hover    { background: var(--primary-dark); }
 .btn-translate:disabled { background: var(--text-light); cursor: wait; }
 
+/* -------------------- delete modal -------------------- */
+.modal-card-narrow { max-width: 460px; }
+
+.modal-question {
+    margin-bottom: 1rem;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+
+.delete-option {
+    margin-bottom: 1rem;
+}
+.delete-option:last-of-type { margin-bottom: 0; }
+
+.delete-option button {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border: none;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-family: inherit;
+    transition: background 0.15s ease, transform 0.06s ease;
+    color: white;
+}
+.delete-option button:disabled {
+    cursor: wait;
+    opacity: 0.6;
+}
+.delete-option button:active:not(:disabled) { transform: scale(0.99); }
+
+.delete-option-desc {
+    font-size: 0.8rem;
+    color: var(--text-light);
+    margin-top: 0.4rem;
+    padding: 0 0.25rem;
+    line-height: 1.45;
+}
+.delete-option-desc strong { color: #DC2626; }
+
+.btn-delete-hard         { background: #DC2626; }
+.btn-delete-hard:hover:not(:disabled)   { background: #B91C1C; }
+.btn-delete-soft         { background: var(--primary); }
+.btn-delete-soft:hover:not(:disabled)   { background: var(--primary-dark); }
+
+.btn-cancel {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    transition: background 0.15s ease;
+}
+.btn-cancel:hover:not(:disabled) { background: var(--bg); }
+.btn-cancel:disabled             { opacity: 0.5; cursor: wait; }
+
 @media (max-width: 600px) {
     .topbar {
         flex-direction: column;

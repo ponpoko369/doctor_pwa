@@ -42,6 +42,34 @@
         </div>
     </main>
 
+    <!-- Delete confirmation modal — choose hard vs soft delete -->
+    <div class="modal-backdrop" id="delete-modal" hidden>
+        <div class="modal-card modal-card-narrow" role="dialog" aria-labelledby="delete-modal-title">
+            <header class="modal-header">
+                <div>
+                    <h2 id="delete-modal-title">예약 삭제</h2>
+                    <p class="modal-subtitle" id="delete-modal-subtitle"></p>
+                </div>
+                <button class="modal-close" id="delete-modal-close" aria-label="닫기">✕</button>
+            </header>
+            <div class="modal-body">
+                <p class="modal-question">이 예약을 어떻게 처리할까요?</p>
+                <div class="delete-option">
+                    <button type="button" class="btn-delete-hard" id="btn-hard-delete">🗑 완전 삭제</button>
+                    <p class="delete-option-desc">DB에서 영구 제거됩니다. <strong>복구 불가능</strong>.</p>
+                </div>
+                <div class="delete-option">
+                    <button type="button" class="btn-delete-soft" id="btn-soft-delete">📦 보관 후 숨기기</button>
+                    <p class="delete-option-desc">‘취소됨(cancelled)’으로 표시되어 화면에서만 사라집니다. DB엔 보존(감사·복구용).</p>
+                </div>
+                <p class="modal-error" id="delete-modal-error" hidden></p>
+            </div>
+            <footer class="modal-footer">
+                <button type="button" class="btn-cancel" id="btn-delete-cancel">취소</button>
+            </footer>
+        </div>
+    </div>
+
     <!-- Symptom detail modal (full text + Korean translation toggle) -->
     <div class="modal-backdrop" id="symptom-modal" hidden>
         <div class="modal-card" role="dialog" aria-labelledby="symptom-modal-title">
