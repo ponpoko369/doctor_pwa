@@ -170,7 +170,7 @@ main {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.btn-delete {
+.btn-manage {
     flex: 0 0 auto;
     background: transparent;
     border: 1px solid var(--border);
@@ -182,10 +182,10 @@ main {
     transition: background 0.15s ease, border-color 0.15s ease;
     color: #64748B;
 }
-.btn-delete:hover {
-    background: #FEE2E2;
-    border-color: #DC2626;
-    color: #DC2626;
+.btn-manage:hover {
+    background: #EFF6FF;
+    border-color: var(--primary);
+    color: var(--primary);
 }
 
 .appt-table .visit-col {
@@ -436,10 +436,12 @@ main {
 }
 .delete-option-desc strong { color: #DC2626; }
 
-.btn-delete-hard         { background: #DC2626; }
-.btn-delete-hard:hover:not(:disabled)   { background: #B91C1C; }
+.btn-modify              { background: #16A34A; }
+.btn-modify:hover:not(:disabled)        { background: #15803D; }
 .btn-delete-soft         { background: var(--primary); }
 .btn-delete-soft:hover:not(:disabled)   { background: var(--primary-dark); }
+.btn-delete-hard         { background: #DC2626; }
+.btn-delete-hard:hover:not(:disabled)   { background: #B91C1C; }
 
 .btn-cancel {
     background: transparent;
@@ -455,6 +457,53 @@ main {
 }
 .btn-cancel:hover:not(:disabled) { background: var(--bg); }
 .btn-cancel:disabled             { opacity: 0.5; cursor: wait; }
+
+/* -------------------- edit form (manage modal view 2) -------------------- */
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 0.85rem;
+}
+.form-group label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.55rem 0.75rem;
+    font: inherit;
+    font-size: 0.95rem;
+    color: var(--text);
+    background: var(--card);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.form-group textarea {
+    resize: vertical;
+    min-height: 5rem;
+    line-height: 1.45;
+}
+
+.form-row {
+    display: flex;
+    gap: 0.75rem;
+}
+.form-row .form-group {
+    flex: 1 1 0;
+    min-width: 0;
+}
 
 @media (max-width: 600px) {
     .topbar {

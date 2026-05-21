@@ -92,7 +92,7 @@ async function fetchAppointments() {
     //    review the symptom history of every patient who ever booked.
     const { data: appts, error: eAppts } = await client
         .from('appointments')
-        .select('id, patient_id, date, time, patients(name, symptoms)')
+        .select('id, patient_id, date, time, patients(name, phone, symptoms)')
         .eq('status', 'confirmed')
         .order('date', { ascending: true })
         .order('time', { ascending: true });
@@ -136,6 +136,11 @@ function viewerUrl(row) {
 let _todayRowIndex = -1;
 let _firstRender = true;
 
+// Cached rows keyed by appointment id so the manage modal can read the
+// patient's full record without a second round trip when the doctor
+// clicks the 수정 button.
+const _rowsById = new Map();
+
 function render({ rows }) {
     const tbody = document.getElementById('appt-body');
 
@@ -147,6 +152,11 @@ function render({ rows }) {
 
     const now = new Date();
     const todayStr = ymd(now);
+
+    // Rebuild the per-id cache so the manage modal can look up rows
+    // by appointment id without re-querying Supabase.
+    _rowsById.clear();
+    rows.forEach(r => _rowsById.set(r.id, r));
 
     // First row with a date >= today (so we can scroll there).
     _todayRowIndex = rows.findIndex(a => a.date >= todayStr);
@@ -179,10 +189,10 @@ function render({ rows }) {
             : '<span class="muted">—</span>';
         const nameCell = `<div class="name-row">
                  <span class="name-text">${escapeHtml(name)}</span>
-                 <button type="button" class="btn-delete"
+                 <button type="button" class="btn-manage"
                          data-appt-id="${escapeHtml(a.id)}"
                          data-name="${escapeHtml(name)}"
-                         title="예약 삭제">🗑</button>
+                         title="수정 / 삭제">✏️</button>
                </div>`;
         // data-* lets the delegated click handler open the right viewer.
         const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
@@ -235,7 +245,7 @@ async function refresh() {
 function onTableClick(e) {
     // Don't hijack the in-row buttons — each handles its own click below.
     if (e.target.closest('.btn-symptom')) return;
-    if (e.target.closest('.btn-delete'))  return;
+    if (e.target.closest('.btn-manage'))  return;
     const tr = e.target.closest('tr');
     if (!tr) return;
     const url = tr.dataset.viewerUrl;
@@ -243,65 +253,130 @@ function onTableClick(e) {
     window.open(url, '_blank', 'noopener');
 }
 
-// ---------- delete-an-appointment modal ----------
-// The doctor picks between two semantics:
-//   * hard  → DELETE the row (physical, irreversible)
-//   * soft  → UPDATE status='cancelled' (row stays in DB, hidden by the
-//             dashboard's status='confirmed' filter)
-// Both are allowed by current RLS on the appointments table (probed
-// with insert+delete and patch round-trips before shipping this UI).
-const deleteModal = {
-    el: null, subtitleEl: null, errEl: null,
-    softBtn: null, hardBtn: null, cancelBtn: null, closeBtn: null,
-    apptId: '', name: '',
+// ---------- manage-appointment modal ----------
+// Three actions, all gated by current RLS on appointments/patients
+// (probed with insert+delete and PATCH round-trips before shipping):
+//   * modify → switch to inline form, save edits to patients + appointments
+//   * soft   → UPDATE appointments.status='cancelled' (row stays, hidden by filter)
+//   * hard   → DELETE appointments row (irreversible)
+const manageModal = {
+    el: null, titleEl: null, subtitleEl: null,
+    viewChoice: null, viewEdit: null, footerChoice: null, footerEdit: null,
+    errChoice: null, errEdit: null,
+    softBtn: null, hardBtn: null, modifyBtn: null,
+    cancelBtn: null, closeBtn: null, saveBtn: null, backBtn: null,
+    nameInput: null, phoneInput: null, symptomsInput: null,
+    dateInput: null, timeInput: null,
+    apptId: '', patientId: '', name: '',
 };
 
-function deleteModalInit() {
-    deleteModal.el         = document.getElementById('delete-modal');
-    deleteModal.subtitleEl = document.getElementById('delete-modal-subtitle');
-    deleteModal.errEl      = document.getElementById('delete-modal-error');
-    deleteModal.softBtn    = document.getElementById('btn-soft-delete');
-    deleteModal.hardBtn    = document.getElementById('btn-hard-delete');
-    deleteModal.cancelBtn  = document.getElementById('btn-delete-cancel');
-    deleteModal.closeBtn   = document.getElementById('delete-modal-close');
+function manageModalInit() {
+    manageModal.el           = document.getElementById('manage-modal');
+    manageModal.titleEl      = document.getElementById('manage-modal-title');
+    manageModal.subtitleEl   = document.getElementById('manage-modal-subtitle');
+    manageModal.viewChoice   = document.getElementById('manage-view-choice');
+    manageModal.viewEdit     = document.getElementById('manage-view-edit');
+    manageModal.footerChoice = document.getElementById('manage-footer-choice');
+    manageModal.footerEdit   = document.getElementById('manage-footer-edit');
+    manageModal.errChoice    = document.getElementById('manage-modal-error');
+    manageModal.errEdit      = document.getElementById('manage-edit-error');
+    manageModal.softBtn      = document.getElementById('btn-soft-delete');
+    manageModal.hardBtn      = document.getElementById('btn-hard-delete');
+    manageModal.modifyBtn    = document.getElementById('btn-modify');
+    manageModal.cancelBtn    = document.getElementById('btn-manage-cancel');
+    manageModal.closeBtn     = document.getElementById('manage-modal-close');
+    manageModal.saveBtn      = document.getElementById('btn-edit-save');
+    manageModal.backBtn      = document.getElementById('btn-edit-back');
+    manageModal.nameInput     = document.getElementById('edit-name');
+    manageModal.phoneInput    = document.getElementById('edit-phone');
+    manageModal.symptomsInput = document.getElementById('edit-symptoms');
+    manageModal.dateInput     = document.getElementById('edit-date');
+    manageModal.timeInput     = document.getElementById('edit-time');
 
-    deleteModal.softBtn.addEventListener('click',   () => performDelete('soft'));
-    deleteModal.hardBtn.addEventListener('click',   () => performDelete('hard'));
-    deleteModal.cancelBtn.addEventListener('click', closeDeleteModal);
-    deleteModal.closeBtn.addEventListener('click',  closeDeleteModal);
-    deleteModal.el.addEventListener('click', (e) => {
-        if (e.target === deleteModal.el) closeDeleteModal();
+    manageModal.modifyBtn.addEventListener('click', enterEditView);
+    manageModal.softBtn.addEventListener('click',   () => performDelete('soft'));
+    manageModal.hardBtn.addEventListener('click',   () => performDelete('hard'));
+    manageModal.saveBtn.addEventListener('click',   saveEdit);
+    manageModal.backBtn.addEventListener('click',   enterChoiceView);
+    manageModal.cancelBtn.addEventListener('click', closeManageModal);
+    manageModal.closeBtn.addEventListener('click',  closeManageModal);
+    manageModal.el.addEventListener('click', (e) => {
+        if (e.target === manageModal.el) closeManageModal();
     });
 }
 
-function openDeleteModal(apptId, name) {
+function openManageModal(apptId, name) {
     if (!apptId) return;
-    deleteModal.apptId = apptId;
-    deleteModal.name = name || '';
-    deleteModal.subtitleEl.textContent = deleteModal.name;
-    deleteModal.errEl.hidden = true;
-    deleteModal.errEl.textContent = '';
-    setDeleteButtonsDisabled(false);
-    deleteModal.el.hidden = false;
+    const row = _rowsById.get(apptId);
+    if (!row) {
+        // Row was filtered out / stale — refresh and bail.
+        refresh();
+        return;
+    }
+    manageModal.apptId    = apptId;
+    manageModal.patientId = row.patient_id;
+    manageModal.name      = name || (row.patients && row.patients.name) || '';
+    manageModal.subtitleEl.textContent = manageModal.name;
+
+    // Pre-populate the edit form straight from the cached row — the
+    // doctor can flip to the edit view without waiting for IO.
+    const p = row.patients || {};
+    manageModal.nameInput.value     = p.name || '';
+    manageModal.phoneInput.value    = p.phone || '';
+    manageModal.symptomsInput.value = p.symptoms || '';
+    manageModal.dateInput.value     = row.date || '';
+    // PostgreSQL "time" comes back as "HH:MM:SS"; <input type=time> wants HH:MM.
+    manageModal.timeInput.value     = (row.time || '').slice(0, 5);
+
+    // Always start on the 3-button choice view.
+    enterChoiceView();
+    setManageButtonsDisabled(false);
+    manageModal.el.hidden = false;
 }
 
-function closeDeleteModal() {
-    deleteModal.el.hidden = true;
-    deleteModal.apptId = '';
+function closeManageModal() {
+    manageModal.el.hidden = true;
+    manageModal.apptId = '';
+    manageModal.patientId = '';
 }
 
-function setDeleteButtonsDisabled(disabled) {
-    [deleteModal.softBtn, deleteModal.hardBtn, deleteModal.cancelBtn]
-        .forEach(b => b.disabled = !!disabled);
+function enterChoiceView() {
+    manageModal.titleEl.textContent = '환자 정보 관리';
+    manageModal.viewChoice.hidden   = false;
+    manageModal.viewEdit.hidden     = true;
+    manageModal.footerChoice.hidden = false;
+    manageModal.footerEdit.hidden   = true;
+    manageModal.errChoice.hidden    = true;
+    manageModal.errEdit.hidden      = true;
+    // Reset any in-flight button label tweaks.
+    manageModal.softBtn.textContent = '📦 보관 후 숨기기';
+    manageModal.hardBtn.textContent = '🗑 완전 삭제';
+}
+
+function enterEditView() {
+    manageModal.titleEl.textContent = '환자 정보 수정';
+    manageModal.viewChoice.hidden   = true;
+    manageModal.viewEdit.hidden     = false;
+    manageModal.footerChoice.hidden = true;
+    manageModal.footerEdit.hidden   = false;
+    manageModal.errEdit.hidden      = true;
+    manageModal.saveBtn.textContent = '💾 저장';
+    setManageButtonsDisabled(false);
+    // Defer focus until after the layout pass so the input is visible.
+    requestAnimationFrame(() => manageModal.nameInput.focus());
+}
+
+function setManageButtonsDisabled(disabled) {
+    [manageModal.softBtn, manageModal.hardBtn, manageModal.modifyBtn,
+     manageModal.cancelBtn, manageModal.saveBtn, manageModal.backBtn]
+        .forEach(b => { if (b) b.disabled = !!disabled; });
 }
 
 async function performDelete(kind) {
-    const apptId = deleteModal.apptId;
+    const apptId = manageModal.apptId;
     if (!apptId) return;
-    setDeleteButtonsDisabled(true);
-    // Visual hint that something is happening — the user picked irreversible
-    // and we don't want a confusing pause without feedback.
-    const targetBtn = kind === 'hard' ? deleteModal.hardBtn : deleteModal.softBtn;
+    setManageButtonsDisabled(true);
+    const targetBtn = kind === 'hard' ? manageModal.hardBtn : manageModal.softBtn;
     const originalLabel = targetBtn.textContent;
     targetBtn.textContent = '처리 중…';
     try {
@@ -313,14 +388,97 @@ async function performDelete(kind) {
             ({ error } = await client.from('appointments').update({ status: 'cancelled' }).eq('id', apptId));
         }
         if (error) throw error;
-        closeDeleteModal();
+        closeManageModal();
         await refresh();
     } catch (e) {
         console.error(e);
-        deleteModal.errEl.hidden = false;
-        deleteModal.errEl.textContent = '삭제 실패: ' + ((e && e.message) ? e.message : e);
+        manageModal.errChoice.hidden = false;
+        manageModal.errChoice.textContent = '실패: ' + ((e && e.message) ? e.message : e);
         targetBtn.textContent = originalLabel;
-        setDeleteButtonsDisabled(false);
+        setManageButtonsDisabled(false);
+    }
+}
+
+// Build a minimal PATCH body containing only the fields the doctor
+// actually changed. Empty values (phone/symptoms) are still sent as
+// empty strings — that's the doctor's signal to clear the field. Name
+// can't be cleared because the table query/UI relies on it.
+function buildPatientPatch(row) {
+    const before = row.patients || {};
+    const patch = {};
+    const name = manageModal.nameInput.value.trim();
+    if (name !== (before.name || ''))               patch.name = name;
+    const phone = manageModal.phoneInput.value.trim();
+    if (phone !== (before.phone || ''))             patch.phone = phone;
+    const symptoms = manageModal.symptomsInput.value;
+    if (symptoms !== (before.symptoms || ''))       patch.symptoms = symptoms;
+    return patch;
+}
+
+function buildApptPatch(row) {
+    const patch = {};
+    const date = manageModal.dateInput.value;
+    if (date && date !== row.date)                  patch.date = date;
+    const time = manageModal.timeInput.value;       // "HH:MM"
+    const beforeTime = (row.time || '').slice(0, 5);
+    if (time && time !== beforeTime) {
+        // Postgres "time" accepts HH:MM:SS; pad seconds so we round-trip
+        // cleanly with what the booking PWA writes.
+        patch.time = time.length === 5 ? `${time}:00` : time;
+    }
+    return patch;
+}
+
+async function saveEdit() {
+    const apptId    = manageModal.apptId;
+    const patientId = manageModal.patientId;
+    if (!apptId || !patientId) return;
+
+    const row = _rowsById.get(apptId);
+    if (!row) {
+        manageModal.errEdit.hidden = false;
+        manageModal.errEdit.textContent = '예약 정보가 만료되었습니다. 새로고침 후 다시 시도하세요.';
+        return;
+    }
+
+    if (!manageModal.nameInput.value.trim()) {
+        manageModal.errEdit.hidden = false;
+        manageModal.errEdit.textContent = '이름은 비울 수 없습니다.';
+        manageModal.nameInput.focus();
+        return;
+    }
+
+    const patientPatch = buildPatientPatch(row);
+    const apptPatch    = buildApptPatch(row);
+    if (Object.keys(patientPatch).length === 0 && Object.keys(apptPatch).length === 0) {
+        // Nothing actually changed — close without a no-op write.
+        closeManageModal();
+        return;
+    }
+
+    setManageButtonsDisabled(true);
+    manageModal.saveBtn.textContent = '저장 중…';
+    try {
+        const client = await initSupabase();
+        const tasks = [];
+        if (Object.keys(patientPatch).length > 0) {
+            tasks.push(client.from('patients').update(patientPatch).eq('id', patientId));
+        }
+        if (Object.keys(apptPatch).length > 0) {
+            tasks.push(client.from('appointments').update(apptPatch).eq('id', apptId));
+        }
+        const results = await Promise.all(tasks);
+        for (const r of results) {
+            if (r.error) throw r.error;
+        }
+        closeManageModal();
+        await refresh();
+    } catch (e) {
+        console.error(e);
+        manageModal.errEdit.hidden = false;
+        manageModal.errEdit.textContent = '저장 실패: ' + ((e && e.message) ? e.message : e);
+        manageModal.saveBtn.textContent = '💾 저장';
+        setManageButtonsDisabled(false);
     }
 }
 
@@ -344,7 +502,7 @@ function modalInit() {
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Escape') return;
         if (!modal.el.hidden)       closeModal();
-        if (!deleteModal.el.hidden) closeDeleteModal();
+        if (!manageModal.el.hidden) closeManageModal();
     });
     modal.translateBtn.addEventListener('click', toggleTranslation);
 }
@@ -419,7 +577,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tickClock();
     setInterval(tickClock, 1000);
     modalInit();
-    deleteModalInit();
+    manageModalInit();
 
     document.getElementById('btn-refresh').addEventListener('click', refresh);
     document.getElementById('btn-today').addEventListener('click', () => scrollToToday('smooth'));
@@ -434,10 +592,10 @@ document.addEventListener('DOMContentLoaded', () => {
         openModal(btn.dataset.symptom || '', btn.dataset.name || '');
     });
     tbody.addEventListener('click', (e) => {
-        const btn = e.target.closest('.btn-delete');
+        const btn = e.target.closest('.btn-manage');
         if (!btn) return;
         e.stopPropagation();
-        openDeleteModal(btn.dataset.apptId || '', btn.dataset.name || '');
+        openManageModal(btn.dataset.apptId || '', btn.dataset.name || '');
     });
 
     refresh();
