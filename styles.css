@@ -9,6 +9,8 @@
     --highlight: #FEF3C7;
     --highlight-border: #F59E0B;
     --past: #F1F5F9;
+    --today: #EFF6FF;
+    --today-border: #2563EB;
     --shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
 }
 
@@ -70,7 +72,7 @@ body {
     color: var(--text-light);
 }
 
-.btn-refresh {
+.btn-refresh, .btn-today {
     background: var(--primary);
     color: white;
     border: none;
@@ -84,9 +86,12 @@ body {
     transition: background 0.15s ease;
 }
 
-.btn-refresh:hover { background: var(--primary-dark); }
-.btn-refresh:active { transform: scale(0.97); }
+.btn-refresh:hover, .btn-today:hover { background: var(--primary-dark); }
+.btn-refresh:active, .btn-today:active { transform: scale(0.97); }
 .btn-refresh:disabled { background: var(--text-light); cursor: wait; }
+
+.btn-today { background: #64748B; margin-left: 0.5rem; }
+.btn-today:hover { background: #475569; }
 
 main {
     padding: 1.5rem;
@@ -105,6 +110,9 @@ main {
     width: 100%;
     border-collapse: collapse;
     font-size: 1rem;
+    /* Fixed layout so the symptoms column can truly clip with ellipsis;
+       otherwise the browser auto-expands the column to fit content. */
+    table-layout: fixed;
 }
 
 .appt-table th {
@@ -129,16 +137,28 @@ main {
 
 .appt-table tr:last-child td { border-bottom: none; }
 
+/* Column widths — picked to give symptoms whatever space is left after
+   the fixed-content columns claim their share. */
+.appt-table .th-time,    .appt-table .time-col    { width: 13rem; }
+.appt-table .th-name,    .appt-table .name-col    { width: 9rem; }
+.appt-table .th-visit,   .appt-table .visit-col   { width: 5rem; }
+.appt-table .th-symptoms,.appt-table .symptoms-col{ width: auto; }
+
 .appt-table .time-col {
     font-variant-numeric: tabular-nums;
     font-weight: 700;
     color: var(--primary);
     white-space: nowrap;
     font-size: 1.05rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .appt-table .name-col {
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .appt-table .visit-col {
@@ -152,40 +172,42 @@ main {
     color: var(--text);
     font-size: 0.95rem;
     line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-width: 380px;
-}
-
-.appt-table .symptoms-col .muted {
-    color: var(--text-light);
-}
-
-/* Give time/visit/diag columns a compact width so the wider symptoms column
-   gets the room it needs without pushing the table off-screen. */
-.appt-table .th-time,
-.appt-table .time-col { width: 1%; }
-.appt-table .th-visit,
-.appt-table .visit-col { width: 1%; }
-.appt-table .th-diag,
-.appt-table .diag-col { width: 1%; white-space: nowrap; text-align: center; }
-
-.btn-diag {
-    display: inline-block;
-    background: var(--primary);
-    color: white;
-    text-decoration: none;
-    padding: 0.4rem 0.75rem;
-    border-radius: 0.5rem;
-    font-size: 0.85rem;
-    font-weight: 600;
-    line-height: 1;
+    /* Single-line clipping with ellipsis — full text lives in the modal. */
     white-space: nowrap;
-    transition: background 0.15s ease;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-.btn-diag:hover { background: var(--primary-dark); }
-.btn-diag:active { transform: scale(0.97); }
-.diag-col .muted { color: var(--text-light); font-size: 0.85rem; }
+
+.appt-table .symptoms-col .muted { color: var(--text-light); }
+
+.symptoms-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;     /* lets the flex child collapse so ellipsis kicks in */
+}
+.symptoms-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.btn-symptom {
+    flex: 0 0 auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.btn-symptom:hover {
+    background: var(--bg);
+    border-color: var(--primary);
+}
 
 .visit-badge {
     display: inline-block;
@@ -196,22 +218,38 @@ main {
     font-size: 0.9rem;
 }
 
+/* Past rows: muted, but still visible. Doctors want to scroll through
+   their entire history. */
 .appt-table tr.past td {
     color: var(--text-light);
     background: var(--past);
 }
+.appt-table tr.past .time-col { color: var(--text-light); }
 
-.appt-table tr.past .time-col {
-    color: var(--text-light);
-}
+/* Subtle blue tint for today's appointments — makes "where am I" visible
+   while scrolling without screaming. */
+.appt-table tr.today td { background: var(--today); }
+.appt-table tr.today .time-col { color: var(--today-border); }
 
+/* "Next up" wins over .today so the slot the doctor is about to see
+   stays the loudest signal on the page. */
 .appt-table tr.next-up td {
     background: var(--highlight);
     box-shadow: inset 3px 0 0 var(--highlight-border);
 }
+.appt-table tr.next-up .time-col { color: var(--highlight-border); }
 
-.appt-table tr.next-up .time-col {
-    color: var(--highlight-border);
+/* Rows with an AI diagnosis are clickable — show that affordance. Rows
+   without a diagnosis keep the default cursor so the doctor doesn't
+   mis-click expecting a 3D viewer that won't open. */
+.appt-table tr.has-diag { cursor: pointer; transition: filter 0.12s ease; }
+.appt-table tr.has-diag:hover td { filter: brightness(0.97); }
+.appt-table tr.has-diag .name-col::after {
+    content: ' ↗';
+    font-size: 0.75em;
+    color: var(--primary);
+    opacity: 0.7;
+    margin-left: 0.25rem;
 }
 
 .loading, .empty {
@@ -231,6 +269,105 @@ main {
     word-break: break-word;
 }
 
+/* -------------------- symptom modal -------------------- */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 19, 32, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    z-index: 100;
+}
+.modal-backdrop[hidden] { display: none; }
+
+.modal-card {
+    background: var(--card);
+    border-radius: 0.75rem;
+    box-shadow: 0 20px 25px -5px rgba(0,0,0,0.2), 0 8px 10px -6px rgba(0,0,0,0.15);
+    width: 100%;
+    max-width: 560px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.modal-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+}
+.modal-header h2 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+}
+.modal-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    margin-top: 0.15rem;
+}
+.modal-close {
+    background: transparent;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    color: var(--text-light);
+    padding: 0.25rem 0.5rem;
+}
+.modal-close:hover { color: var(--text); }
+
+.modal-body {
+    padding: 1rem 1.25rem;
+    overflow-y: auto;
+}
+.modal-lang-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-light);
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+.modal-text {
+    color: var(--text);
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.98rem;
+}
+.modal-error {
+    margin-top: 0.75rem;
+    color: #DC2626;
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+}
+
+.modal-footer {
+    padding: 0.75rem 1.25rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+}
+.btn-translate {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.btn-translate:hover    { background: var(--primary-dark); }
+.btn-translate:disabled { background: var(--text-light); cursor: wait; }
+
 @media (max-width: 600px) {
     .topbar {
         flex-direction: column;
@@ -247,4 +384,7 @@ main {
     main { padding: 1rem; }
     .appt-table th, .appt-table td { padding: 0.75rem 0.85rem; }
     .appt-table .time-col { font-size: 0.95rem; }
+    .appt-table .th-time,    .appt-table .time-col    { width: 9rem; }
+    .appt-table .th-name,    .appt-table .name-col    { width: 6.5rem; }
+    .appt-table .th-visit,   .appt-table .visit-col   { width: 3.5rem; }
 }

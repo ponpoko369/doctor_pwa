@@ -14,12 +14,13 @@
     <header class="topbar">
         <div class="topbar-left">
             <h1>예약 현황</h1>
-            <p class="subtitle" id="cutoff-label">3시간 전 이후의 예약 · AI 진단 완료 환자</p>
+            <p class="subtitle" id="cutoff-label">전체 환자 · 위 스크롤=과거, 아래 스크롤=미래</p>
         </div>
         <div class="topbar-right">
             <div class="clock" id="clock">--:--:--</div>
             <p class="last-refresh" id="last-refresh">갱신: -</p>
             <button class="btn-refresh" id="btn-refresh">↻ 새로고침</button>
+            <button class="btn-today" id="btn-today" title="오늘로 이동">📅 오늘</button>
         </div>
     </header>
 
@@ -32,15 +33,35 @@
                         <th class="th-name">환자 이름</th>
                         <th class="th-visit">방문 횟수</th>
                         <th class="th-symptoms">증상</th>
-                        <th class="th-diag">AI 진단</th>
                     </tr>
                 </thead>
                 <tbody id="appt-body">
-                    <tr><td colspan="5" class="loading">불러오는 중...</td></tr>
+                    <tr><td colspan="4" class="loading">불러오는 중...</td></tr>
                 </tbody>
             </table>
         </div>
     </main>
+
+    <!-- Symptom detail modal (full text + Korean translation toggle) -->
+    <div class="modal-backdrop" id="symptom-modal" hidden>
+        <div class="modal-card" role="dialog" aria-labelledby="symptom-modal-title">
+            <header class="modal-header">
+                <div>
+                    <h2 id="symptom-modal-title">증상</h2>
+                    <p class="modal-subtitle" id="symptom-modal-subtitle"></p>
+                </div>
+                <button class="modal-close" id="symptom-modal-close" aria-label="닫기">✕</button>
+            </header>
+            <div class="modal-body">
+                <p class="modal-lang-label" id="symptom-modal-lang">스페인어 원문</p>
+                <div class="modal-text" id="symptom-modal-text"></div>
+                <p class="modal-error" id="symptom-modal-error" hidden></p>
+            </div>
+            <footer class="modal-footer">
+                <button class="btn-translate" id="btn-translate">🌐 한글 번역</button>
+            </footer>
+        </div>
+    </div>
 
     <script src="supabase.js"></script>
     <script src="app.js"></script>

@@ -1,12 +1,7 @@
 // Auto-refresh cadence. Doctors typically leave the dashboard open all day;
-// 60 s is frequent enough that the cutoff window stays accurate without
+// 60 s is frequent enough that the visible window stays accurate without
 // hammering Supabase.
 const REFRESH_INTERVAL_MS = 60_000;
-// "Now - this many hours" is the start of the visible window for
-// appointments without an AI diagnosis. Past appointments that DO have a
-// diagnosis are always shown (regardless of cutoff) so the doctor can
-// replay the 3D viewer.
-const CUTOFF_HOURS_BACK = 3;
 
 // ---------- helpers ----------
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -33,26 +28,36 @@ function escapeHtml(s) {
     }[c]));
 }
 
+const WEEKDAY_KO = ['일','월','화','수','목','금','토'];
+
+// Time-column text. For today/tomorrow keep the friendly "오늘/내일" prefix
+// the old dashboard used; for other days surface the weekday + date so the
+// doctor can scan the timeline without doing arithmetic in their head.
 function formatTimeLabel(dt, now) {
-    // Same-day → just HH:MM; otherwise prefix the month/day so multi-day
-    // listings stay unambiguous.
     const sameDay = dt.getFullYear() === now.getFullYear()
         && dt.getMonth() === now.getMonth()
         && dt.getDate() === now.getDate();
     const hhmm = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
-    if (sameDay) return `오늘  ${hhmm}`;
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+    if (sameDay) return `오늘 (${WEEKDAY_KO[dt.getDay()]})  ${hhmm}`;
+
+    const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
     if (dt.getFullYear() === tomorrow.getFullYear()
         && dt.getMonth() === tomorrow.getMonth()
         && dt.getDate() === tomorrow.getDate()) {
-        return `내일  ${hhmm}`;
+        return `내일 (${WEEKDAY_KO[dt.getDay()]})  ${hhmm}`;
     }
-    // For older past dates, show the year too so it's unambiguous.
+    const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
+    if (dt.getFullYear() === yesterday.getFullYear()
+        && dt.getMonth() === yesterday.getMonth()
+        && dt.getDate() === yesterday.getDate()) {
+        return `어제 (${WEEKDAY_KO[dt.getDay()]})  ${hhmm}`;
+    }
+    // Year-prefixed only when it differs from "now" — keeps in-year dates
+    // compact ("05/21 (목) 09:00") while older history stays unambiguous.
     if (dt.getFullYear() !== now.getFullYear()) {
-        return `${dt.getFullYear()}/${pad2(dt.getMonth() + 1)}/${pad2(dt.getDate())}  ${hhmm}`;
+        return `${dt.getFullYear()}/${pad2(dt.getMonth() + 1)}/${pad2(dt.getDate())} (${WEEKDAY_KO[dt.getDay()]})  ${hhmm}`;
     }
-    return `${pad2(dt.getMonth() + 1)}/${pad2(dt.getDate())}  ${hhmm}`;
+    return `${pad2(dt.getMonth() + 1)}/${pad2(dt.getDate())} (${WEEKDAY_KO[dt.getDay()]})  ${hhmm}`;
 }
 
 // ---------- clock ----------
@@ -61,116 +66,62 @@ function tickClock() {
 }
 
 // ---------- data ----------
-// Returns rows for the table. Two sources combined:
-//   1. Confirmed appointments in the recent/upcoming window (>= cutoff).
-//   2. Past appointments belonging to patients who have an AI diagnosis.
-// Each row is tagged with the latest diagnosis (if any) for that patient
-// so the render layer can show the "AI 진단 결과" button.
+// Pulls every confirmed appointment + every AI diagnosis, joins them
+// in-memory. No date filtering — the doctor wants the whole timeline,
+// scrollable in both directions.
 async function fetchAppointments() {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() - CUTOFF_HOURS_BACK * 60 * 60 * 1000);
-
     const client = await initSupabase();
 
-    // 1. AI diagnoses — one row per analysis run. We only need the latest
-    //    per patient for the button + the patient list below.
+    // 1. AI diagnoses — only the latest per patient is needed for the
+    //    "row is clickable → 3D viewer" check.
     const { data: diagRows, error: eDiag } = await client
         .from('ai_diagnoses')
         .select('id, patient_id, created_at')
         .order('created_at', { ascending: false });
     if (eDiag) throw eDiag;
 
-    // Latest diagnosis per patient.
     const latestDiagByPatient = new Map();
     (diagRows || []).forEach(d => {
         if (!latestDiagByPatient.has(d.patient_id)) {
             latestDiagByPatient.set(d.patient_id, d);
         }
     });
-    const diagnosedPatientIds = [...latestDiagByPatient.keys()];
 
-    // 2. Confirmed appointments — pull everything for diagnosed patients
-    //    (so past visits surface) PLUS everything from the cutoff day
-    //    onward. Union'd client-side because PostgREST's OR is awkward
-    //    across an IN + GTE combo.
-    const cutoffDate = ymd(cutoff);
-
-    const upcomingQ = client
+    // 2. ALL confirmed appointments, joined with patient name/symptoms.
+    //    Past visits without a diagnosis still surface so the doctor can
+    //    review the symptom history of every patient who ever booked.
+    const { data: appts, error: eAppts } = await client
         .from('appointments')
         .select('id, patient_id, date, time, patients(name, symptoms)')
-        .gte('date', cutoffDate)
-        .eq('status', 'confirmed');
-
-    // Avoid sending IN with an empty array (PostgREST treats `in.()` as a
-    // syntax error). Skip the second query entirely when no one has a
-    // diagnosis yet — the table will just show upcoming appointments.
-    const diagnosedQ = diagnosedPatientIds.length > 0
-        ? client
-            .from('appointments')
-            .select('id, patient_id, date, time, patients(name, symptoms)')
-            .in('patient_id', diagnosedPatientIds)
-            .eq('status', 'confirmed')
-        : null;
-
-    const [upRes, diagRes] = await Promise.all([
-        upcomingQ,
-        diagnosedQ || Promise.resolve({ data: [], error: null }),
-    ]);
-    if (upRes.error)   throw upRes.error;
-    if (diagRes.error) throw diagRes.error;
-
-    // 3. Merge + dedupe by appointment id, then filter the upcoming half by
-    //    the precise datetime cutoff (cutoffDate is whole-day-loose).
-    const byId = new Map();
-    (upRes.data || []).forEach(a => {
-        if (combineDt(a.date, a.time) >= cutoff) byId.set(a.id, a);
-    });
-    (diagRes.data || []).forEach(a => {
-        if (!byId.has(a.id)) byId.set(a.id, a);
-    });
-    let rows = [...byId.values()];
-
-    // 4. Attach latest diagnosis (if any) to each row.
-    rows.forEach(a => { a.latestDiag = latestDiagByPatient.get(a.patient_id) || null; });
-
-    // 5. Sort by datetime (oldest first) so past visits sit at the top and
-    //    upcoming ones — including the highlighted "next up" — at the bottom.
-    rows.sort((a, b) => combineDt(a.date, a.time) - combineDt(b.date, b.time));
-
-    if (rows.length === 0) return { rows: [], cutoff };
-
-    // 6. Visit number = 1-indexed position of THIS appointment in the
-    //    patient's full confirmed history. Fetch each involved patient's
-    //    full history once (independently of date filters above), build a
-    //    per-patient ordered list, then look up the index for each row.
-    const patientIds = [...new Set(rows.map(a => a.patient_id))];
-    const { data: history, error: eHist } = await client
-        .from('appointments')
-        .select('id, patient_id, date, time')
-        .in('patient_id', patientIds)
         .eq('status', 'confirmed')
         .order('date', { ascending: true })
         .order('time', { ascending: true });
-    if (eHist) throw eHist;
+    if (eAppts) throw eAppts;
 
+    let rows = appts || [];
+    if (rows.length === 0) return { rows: [] };
+
+    // 3. Attach diagnosis info to each row.
+    rows.forEach(a => { a.latestDiag = latestDiagByPatient.get(a.patient_id) || null; });
+
+    // 4. Visit number = 1-indexed position in the patient's confirmed
+    //    history. We already have every confirmed appointment for every
+    //    patient (step 2 had no filter), so we can compute this without
+    //    a second round trip.
     const byPatient = new Map();
-    (history || []).forEach(a => {
+    rows.forEach(a => {
         if (!byPatient.has(a.patient_id)) byPatient.set(a.patient_id, []);
         byPatient.get(a.patient_id).push(a);
     });
-
     rows.forEach(a => {
         const list = byPatient.get(a.patient_id) || [];
         a.visitNumber = list.findIndex(x => x.id === a.id) + 1;
     });
 
-    return { rows, cutoff };
+    return { rows };
 }
 
 // ---------- render ----------
-// Build the viewer URL for one diagnosed row. Passes the patient id so the
-// viewer can fetch the latest diagnosis; name is included purely so the
-// top bar greets the doctor with a familiar label while loading.
 function viewerUrl(row) {
     const params = new URLSearchParams({
         patientId: row.patient_id,
@@ -180,46 +131,69 @@ function viewerUrl(row) {
     return `viewer/index.html?${params.toString()}`;
 }
 
-function render({ rows, cutoff }) {
-    const tbody = document.getElementById('appt-body');
-    const cutoffLabel = document.getElementById('cutoff-label');
+// Today's row index — used after render() to anchor the initial scroll
+// position. Reset on every render so a manual refresh re-centers.
+let _todayRowIndex = -1;
+let _firstRender = true;
 
-    cutoffLabel.textContent =
-        `${CUTOFF_HOURS_BACK}시간 전(${hms(cutoff).slice(0, 5)}) 이후의 예약 · AI 진단 완료 환자`;
+function render({ rows }) {
+    const tbody = document.getElementById('appt-body');
 
     if (!rows || rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">표시할 예약 또는 진단이 없습니다.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">표시할 예약이 없습니다.</td></tr>';
+        _todayRowIndex = -1;
         return;
     }
 
     const now = new Date();
-    // First row that is "now or in the future" gets the "next up" highlight.
+    const todayStr = ymd(now);
+
+    // First row with a date >= today (so we can scroll there).
+    _todayRowIndex = rows.findIndex(a => a.date >= todayStr);
+    if (_todayRowIndex < 0) _todayRowIndex = rows.length - 1;   // all past → last
+
+    // "Next up" = first row whose datetime is >= now. Highlighted in yellow.
     const nextIdx = rows.findIndex(a => combineDt(a.date, a.time) >= now);
 
     tbody.innerHTML = rows.map((a, idx) => {
         const dt = combineDt(a.date, a.time);
         const isPast = dt < now;
         const isNextUp = idx === nextIdx;
+        const isToday = a.date === todayStr;
+        const hasDiag = !!a.latestDiag;
         const cls = [];
-        if (isPast) cls.push('past');
+        if (isPast)   cls.push('past');
         if (isNextUp) cls.push('next-up');
+        if (isToday)  cls.push('today');
+        if (hasDiag)  cls.push('has-diag');
         const name = (a.patients && a.patients.name) ? a.patients.name : '(이름 없음)';
         const symptomsRaw = (a.patients && a.patients.symptoms) ? a.patients.symptoms.trim() : '';
-        const symptomsHtml = symptomsRaw
-            ? escapeHtml(symptomsRaw)
+        const symptomCell = symptomsRaw
+            ? `<div class="symptoms-row">
+                 <span class="symptoms-text" title="${escapeHtml(symptomsRaw)}">${escapeHtml(symptomsRaw)}</span>
+                 <button type="button" class="btn-symptom"
+                         data-symptom="${escapeHtml(symptomsRaw)}"
+                         data-name="${escapeHtml(name)}"
+                         title="전체 증상 보기">📋</button>
+               </div>`
             : '<span class="muted">—</span>';
-        const hasDiag = !!a.latestDiag;
-        const diagCell = hasDiag
-            ? `<a class="btn-diag" target="_blank" rel="noopener" href="${escapeHtml(viewerUrl(a))}">AI 진단 결과 →</a>`
-            : '<span class="muted">—</span>';
-        return `<tr class="${cls.join(' ')}">
+        // data-* lets the delegated click handler open the right viewer.
+        const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
+        return `<tr class="${cls.join(' ')}" data-viewer-url="${viewerHref}">
             <td class="time-col">${formatTimeLabel(dt, now)}</td>
             <td class="name-col">${escapeHtml(name)}</td>
             <td class="visit-col"><span class="visit-badge">${a.visitNumber}회</span></td>
-            <td class="symptoms-col">${symptomsHtml}</td>
-            <td class="diag-col">${diagCell}</td>
+            <td class="symptoms-col">${symptomCell}</td>
         </tr>`;
     }).join('');
+}
+
+function scrollToToday(behavior) {
+    if (_todayRowIndex < 0) return;
+    const rows = document.querySelectorAll('#appt-body tr');
+    const target = rows[_todayRowIndex];
+    if (!target) return;
+    target.scrollIntoView({ behavior: behavior || 'auto', block: 'start' });
 }
 
 function setLastRefresh() {
@@ -233,13 +207,119 @@ async function refresh() {
         const result = await fetchAppointments();
         render(result);
         setLastRefresh();
+        // On the very first load only — auto-park the viewport on today.
+        // Later refreshes preserve the doctor's current scroll position.
+        if (_firstRender) {
+            _firstRender = false;
+            // Defer past the layout pass so scrollIntoView sees real offsets.
+            requestAnimationFrame(() => scrollToToday('auto'));
+        }
     } catch (e) {
         console.error(e);
         const msg = (e && e.message) ? e.message : String(e);
         document.getElementById('appt-body').innerHTML =
-            `<tr><td colspan="5" class="error">데이터를 불러오지 못했습니다.\n${escapeHtml(msg)}</td></tr>`;
+            `<tr><td colspan="4" class="error">데이터를 불러오지 못했습니다.\n${escapeHtml(msg)}</td></tr>`;
     } finally {
         btn.disabled = false;
+    }
+}
+
+// ---------- row click → 3D viewer ----------
+function onTableClick(e) {
+    // Don't hijack the symptom button — that opens its own modal.
+    if (e.target.closest('.btn-symptom')) return;
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const url = tr.dataset.viewerUrl;
+    if (!url) return;     // no diagnosis → row is not clickable
+    window.open(url, '_blank', 'noopener');
+}
+
+// ---------- symptom modal + translation ----------
+const modal = {
+    el: null, textEl: null, langEl: null, errEl: null,
+    subtitleEl: null, translateBtn: null,
+    original: '', translated: '', mode: 'original', // 'original' | 'translated'
+};
+
+function modalInit() {
+    modal.el           = document.getElementById('symptom-modal');
+    modal.textEl       = document.getElementById('symptom-modal-text');
+    modal.langEl       = document.getElementById('symptom-modal-lang');
+    modal.errEl        = document.getElementById('symptom-modal-error');
+    modal.subtitleEl   = document.getElementById('symptom-modal-subtitle');
+    modal.translateBtn = document.getElementById('btn-translate');
+
+    document.getElementById('symptom-modal-close').addEventListener('click', closeModal);
+    modal.el.addEventListener('click', (e) => { if (e.target === modal.el) closeModal(); });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.el.hidden) closeModal();
+    });
+    modal.translateBtn.addEventListener('click', toggleTranslation);
+}
+
+function openModal(symptom, name) {
+    modal.original   = symptom;
+    modal.translated = '';
+    modal.mode       = 'original';
+    modal.subtitleEl.textContent = name || '';
+    modal.langEl.textContent     = '스페인어 원문';
+    modal.textEl.textContent     = symptom;
+    modal.errEl.hidden  = true;
+    modal.errEl.textContent = '';
+    modal.translateBtn.disabled  = false;
+    modal.translateBtn.textContent = '🌐 한글 번역';
+    modal.el.hidden = false;
+}
+
+function closeModal() {
+    modal.el.hidden = true;
+}
+
+async function toggleTranslation() {
+    if (modal.mode === 'translated') {
+        // Swap back to original — already cached, no API call.
+        modal.mode = 'original';
+        modal.langEl.textContent = '스페인어 원문';
+        modal.textEl.textContent = modal.original;
+        modal.translateBtn.textContent = '🌐 한글 번역';
+        modal.errEl.hidden = true;
+        return;
+    }
+    // mode === 'original' → translate
+    if (modal.translated) {
+        // Translation already fetched once in this open session — reuse.
+        modal.mode = 'translated';
+        modal.langEl.textContent = '한국어 번역';
+        modal.textEl.textContent = modal.translated;
+        modal.translateBtn.textContent = '🔁 원문 보기';
+        return;
+    }
+
+    modal.translateBtn.disabled = true;
+    modal.translateBtn.textContent = '번역 중…';
+    modal.errEl.hidden = true;
+    try {
+        const resp = await fetch('/api/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: modal.original }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        modal.translated = (data.translation || '').trim();
+        if (!modal.translated) throw new Error('빈 번역 응답');
+
+        modal.mode = 'translated';
+        modal.langEl.textContent = '한국어 번역';
+        modal.textEl.textContent = modal.translated;
+        modal.translateBtn.disabled = false;
+        modal.translateBtn.textContent = '🔁 원문 보기';
+    } catch (e) {
+        modal.errEl.hidden = false;
+        modal.errEl.textContent = '번역 실패: ' + (e.message || e);
+        modal.translateBtn.disabled = false;
+        modal.translateBtn.textContent = '🌐 한글 번역';
     }
 }
 
@@ -247,8 +327,21 @@ async function refresh() {
 document.addEventListener('DOMContentLoaded', () => {
     tickClock();
     setInterval(tickClock, 1000);
+    modalInit();
 
     document.getElementById('btn-refresh').addEventListener('click', refresh);
+    document.getElementById('btn-today').addEventListener('click', () => scrollToToday('smooth'));
+
+    // Delegated click handlers on the table body.
+    const tbody = document.getElementById('appt-body');
+    tbody.addEventListener('click', onTableClick);
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-symptom');
+        if (!btn) return;
+        e.stopPropagation();
+        openModal(btn.dataset.symptom || '', btn.dataset.name || '');
+    });
+
     refresh();
     setInterval(refresh, REFRESH_INTERVAL_MS);
 });
