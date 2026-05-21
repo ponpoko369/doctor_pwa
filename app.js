@@ -28,6 +28,17 @@ function escapeHtml(s) {
     }[c]));
 }
 
+// Lowercase + strip combining diacritics so "inflamación" matches a
+// search for "inflamacion" (and vice versa). Applied identically to the
+// data-search haystack at render time and to the query at filter time.
+function normalizeForSearch(s) {
+    return (s == null ? '' : String(s))
+        .toLowerCase()
+        .normalize('NFD')
+        // Combining diacritical marks (U+0300..U+036F).
+        .replace(/[̀-ͯ]/g, '');
+}
+
 const WEEKDAY_KO = ['일','월','화','수','목','금','토'];
 
 // Time-column text. For today/tomorrow keep the friendly "오늘/내일" prefix
@@ -199,11 +210,16 @@ function render({ rows }) {
                </div>`;
         // data-* lets the delegated click handler open the right viewer.
         const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
-        // data-search holds a lowercased haystack the live filter scans
-        // against (name + phone). Lowercased once at render so the input
-        // handler can use a single .includes() per row.
-        const phoneRaw = (a.patients && a.patients.phone) ? a.patients.phone : '';
-        const searchHaystack = `${(name || '').toLowerCase()} ${phoneRaw.toLowerCase()}`;
+        // data-search holds a diacritic-stripped lowercased haystack the
+        // live filter scans against (name + phone + symptoms). Normalized
+        // once at render so the input handler can use a single .includes()
+        // per row, and so Spanish accents don't break partial matches
+        // (e.g. "inflamación" remains findable by "inflamacion").
+        const phoneRaw    = (a.patients && a.patients.phone)    ? a.patients.phone    : '';
+        const symptomsRawForSearch = (a.patients && a.patients.symptoms) ? a.patients.symptoms : '';
+        const searchHaystack = [name, phoneRaw, symptomsRawForSearch]
+            .map(normalizeForSearch)
+            .join(' ');
         return `<tr class="${cls.join(' ')}" data-viewer-url="${viewerHref}" data-search="${escapeHtml(searchHaystack)}">
             <td class="time-col">${formatTimeLabel(dt, now)}</td>
             <td class="name-col">${nameCell}</td>
@@ -222,7 +238,10 @@ function render({ rows }) {
 // query. Runs purely against the rendered DOM (rows are already in memory),
 // no Supabase round-trip per keystroke.
 function applySearchFilter(rawQuery) {
-    const q = (rawQuery || '').trim().toLowerCase();
+    // Same normalization as the row haystacks built in render() — both
+    // sides go through normalizeForSearch so accented vs unaccented
+    // input/data lines up.
+    const q = normalizeForSearch((rawQuery || '').trim());
     const rows = document.querySelectorAll('#appt-body tr[data-search]');
     let visibleCount = 0;
     rows.forEach(tr => {
