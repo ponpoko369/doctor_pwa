@@ -165,6 +165,9 @@ function render({ rows }) {
     // "Next up" = first row whose datetime is >= now. Highlighted in yellow.
     const nextIdx = rows.findIndex(a => combineDt(a.date, a.time) >= now);
 
+    // Re-apply the active search filter to the freshly rendered DOM.
+    // We mutate tbody.innerHTML below; the filter pass at the end of
+    // render() catches the new rows.
     tbody.innerHTML = rows.map((a, idx) => {
         const dt = combineDt(a.date, a.time);
         const isPast = dt < now;
@@ -196,13 +199,72 @@ function render({ rows }) {
                </div>`;
         // data-* lets the delegated click handler open the right viewer.
         const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
-        return `<tr class="${cls.join(' ')}" data-viewer-url="${viewerHref}">
+        // data-search holds a lowercased haystack the live filter scans
+        // against (name + phone). Lowercased once at render so the input
+        // handler can use a single .includes() per row.
+        const phoneRaw = (a.patients && a.patients.phone) ? a.patients.phone : '';
+        const searchHaystack = `${(name || '').toLowerCase()} ${phoneRaw.toLowerCase()}`;
+        return `<tr class="${cls.join(' ')}" data-viewer-url="${viewerHref}" data-search="${escapeHtml(searchHaystack)}">
             <td class="time-col">${formatTimeLabel(dt, now)}</td>
             <td class="name-col">${nameCell}</td>
             <td class="visit-col"><span class="visit-badge">${a.visitNumber}회</span></td>
             <td class="symptoms-col">${symptomCell}</td>
         </tr>`;
     }).join('');
+
+    // Reapply any active search filter to the freshly painted rows so
+    // a 60s auto-refresh doesn't reveal hidden rows behind the filter.
+    applySearchFilter(currentSearchQuery());
+}
+
+// ---------- live search filter ----------
+// Hides table rows whose data-search haystack doesn't contain the typed
+// query. Runs purely against the rendered DOM (rows are already in memory),
+// no Supabase round-trip per keystroke.
+function applySearchFilter(rawQuery) {
+    const q = (rawQuery || '').trim().toLowerCase();
+    const rows = document.querySelectorAll('#appt-body tr[data-search]');
+    let visibleCount = 0;
+    rows.forEach(tr => {
+        const match = !q || tr.dataset.search.includes(q);
+        tr.hidden = !match;
+        if (match) visibleCount++;
+    });
+
+    const countEl = document.getElementById('search-result-count');
+    if (countEl) {
+        if (!q) {
+            countEl.hidden = true;
+            countEl.textContent = '';
+        } else {
+            countEl.hidden = false;
+            countEl.textContent = `${visibleCount}건`;
+        }
+    }
+
+    // Surface a clear empty-state row when the filter zeros things out,
+    // separate from the "no appointments" state that fetchAppointments
+    // would render — different message so the doctor knows it's the
+    // search, not an empty schedule.
+    let emptyRow = document.getElementById('no-results-row');
+    const tbody = document.getElementById('appt-body');
+    const showEmpty = q && visibleCount === 0;
+    if (showEmpty) {
+        if (!emptyRow) {
+            emptyRow = document.createElement('tr');
+            emptyRow.id = 'no-results-row';
+            emptyRow.innerHTML = '<td colspan="4" class="empty">검색 결과가 없습니다.</td>';
+            tbody.appendChild(emptyRow);
+        }
+        emptyRow.hidden = false;
+    } else if (emptyRow) {
+        emptyRow.hidden = true;
+    }
+}
+
+function currentSearchQuery() {
+    const input = document.getElementById('search-input');
+    return input ? input.value : '';
 }
 
 function scrollToToday(behavior) {
@@ -581,6 +643,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('btn-refresh').addEventListener('click', refresh);
     document.getElementById('btn-today').addEventListener('click', () => scrollToToday('smooth'));
+
+    // Live name/phone filter. Doctors will type a few characters and
+    // expect the table to react immediately — no debounce needed since
+    // the filter is purely a DOM walk.
+    const searchInput = document.getElementById('search-input');
+    searchInput.addEventListener('input', () => applySearchFilter(searchInput.value));
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            searchInput.value = '';
+            applySearchFilter('');
+            searchInput.blur();
+        }
+    });
 
     // Delegated click handlers on the table body.
     const tbody = document.getElementById('appt-body');

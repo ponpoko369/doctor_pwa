@@ -16,6 +16,16 @@
             <h1>예약 현황</h1>
             <p class="subtitle" id="cutoff-label">전체 환자 · 위 스크롤=과거, 아래 스크롤=미래</p>
         </div>
+        <div class="topbar-middle">
+            <label class="search-wrapper">
+                <span class="search-icon" aria-hidden="true">🔍</span>
+                <input id="search-input" type="search"
+                       placeholder="환자 이름 또는 전화번호 검색"
+                       autocomplete="off"
+                       aria-label="환자 이름 또는 전화번호 검색">
+                <span class="search-result-count" id="search-result-count" hidden></span>
+            </label>
+        </div>
         <div class="topbar-right">
             <div class="clock" id="clock">--:--:--</div>
             <p class="last-refresh" id="last-refresh">갱신: -</p>

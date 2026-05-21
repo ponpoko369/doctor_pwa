@@ -53,6 +53,62 @@ body {
     margin-top: 0.15rem;
 }
 
+.topbar-middle {
+    flex: 1 1 320px;
+    min-width: 0;
+    max-width: 420px;
+    display: flex;
+    align-items: center;
+}
+
+.search-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 0.6rem;
+    padding: 0 0.7rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.search-wrapper:focus-within {
+    background: var(--card);
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.search-icon {
+    color: var(--text-light);
+    font-size: 0.95rem;
+    line-height: 1;
+}
+.search-wrapper input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    padding: 0.55rem 0;
+    font: inherit;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+.search-wrapper input::placeholder { color: var(--text-light); }
+/* Hide the WebKit native search clear button — we rely on ESC instead so
+   the visual chrome stays consistent across browsers. */
+.search-wrapper input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+.search-result-count {
+    flex: 0 0 auto;
+    color: var(--text-light);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+}
+
 .topbar-right {
     display: flex;
     flex-direction: column;
@@ -510,6 +566,10 @@ main {
         flex-direction: column;
         align-items: stretch;
         gap: 0.5rem;
+    }
+    .topbar-middle {
+        flex: 1 1 auto;
+        max-width: none;
     }
     .topbar-right {
         flex-direction: row;
