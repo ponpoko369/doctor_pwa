@@ -177,11 +177,18 @@ function render({ rows }) {
                          title="전체 증상 보기">📋</button>
                </div>`
             : '<span class="muted">—</span>';
+        const nameCell = `<div class="name-row">
+                 <span class="name-text">${escapeHtml(name)}</span>
+                 <button type="button" class="btn-delete"
+                         data-appt-id="${escapeHtml(a.id)}"
+                         data-name="${escapeHtml(name)}"
+                         title="예약 삭제">🗑</button>
+               </div>`;
         // data-* lets the delegated click handler open the right viewer.
         const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
         return `<tr class="${cls.join(' ')}" data-viewer-url="${viewerHref}">
             <td class="time-col">${formatTimeLabel(dt, now)}</td>
-            <td class="name-col">${escapeHtml(name)}</td>
+            <td class="name-col">${nameCell}</td>
             <td class="visit-col"><span class="visit-badge">${a.visitNumber}회</span></td>
             <td class="symptoms-col">${symptomCell}</td>
         </tr>`;
@@ -226,13 +233,40 @@ async function refresh() {
 
 // ---------- row click → 3D viewer ----------
 function onTableClick(e) {
-    // Don't hijack the symptom button — that opens its own modal.
+    // Don't hijack the in-row buttons — each handles its own click below.
     if (e.target.closest('.btn-symptom')) return;
+    if (e.target.closest('.btn-delete'))  return;
     const tr = e.target.closest('tr');
     if (!tr) return;
     const url = tr.dataset.viewerUrl;
     if (!url) return;     // no diagnosis → row is not clickable
     window.open(url, '_blank', 'noopener');
+}
+
+// ---------- soft-delete an appointment ----------
+// Sets status='cancelled' rather than physically removing the row — the
+// existing dashboard already filters by status='confirmed', so the row
+// disappears from view but stays in the DB for audit/recovery. RLS
+// already allows anon UPDATE on appointments (verified via PATCH probe).
+async function deleteAppointment(apptId, name) {
+    if (!apptId) return;
+    const ok = confirm(
+        `'${name}' 환자의 예약을 삭제할까요?\n\n`
+        + '화면에서 사라지지만 DB에는 ‘취소됨(cancelled)’ 상태로 남습니다.'
+    );
+    if (!ok) return;
+    try {
+        const client = await initSupabase();
+        const { error } = await client
+            .from('appointments')
+            .update({ status: 'cancelled' })
+            .eq('id', apptId);
+        if (error) throw error;
+        await refresh();
+    } catch (e) {
+        console.error(e);
+        alert('삭제 실패: ' + ((e && e.message) ? e.message : e));
+    }
 }
 
 // ---------- symptom modal + translation ----------
@@ -340,6 +374,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!btn) return;
         e.stopPropagation();
         openModal(btn.dataset.symptom || '', btn.dataset.name || '');
+    });
+    tbody.addEventListener('click', (e) => {
+        const btn = e.target.closest('.btn-delete');
+        if (!btn) return;
+        e.stopPropagation();
+        deleteAppointment(btn.dataset.apptId || '', btn.dataset.name || '');
     });
 
     refresh();

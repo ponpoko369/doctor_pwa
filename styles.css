@@ -156,9 +156,36 @@ main {
 
 .appt-table .name-col {
     font-weight: 500;
+}
+.name-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+}
+.name-text {
+    flex: 1 1 auto;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+.btn-delete {
+    flex: 0 0 auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 0.4rem;
+    padding: 0.25rem 0.45rem;
+    cursor: pointer;
+    font-size: 0.95rem;
+    line-height: 1;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    color: #64748B;
+}
+.btn-delete:hover {
+    background: #FEE2E2;
+    border-color: #DC2626;
+    color: #DC2626;
 }
 
 .appt-table .visit-col {
@@ -244,7 +271,7 @@ main {
    mis-click expecting a 3D viewer that won't open. */
 .appt-table tr.has-diag { cursor: pointer; transition: filter 0.12s ease; }
 .appt-table tr.has-diag:hover td { filter: brightness(0.97); }
-.appt-table tr.has-diag .name-col::after {
+.appt-table tr.has-diag .name-text::after {
     content: ' ↗';
     font-size: 0.75em;
     color: var(--primary);
