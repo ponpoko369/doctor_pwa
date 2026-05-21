@@ -21,7 +21,11 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') { res.status(204).end(); return; }
     if (req.method !== 'POST')    { res.status(405).json({ error: 'method' }); return; }
 
-    const key = process.env.ANTHROPIC_API_KEY;
+    // Vercel CLI on Windows has been observed to inject a UTF-8 BOM
+    // (U+FEFF) into env values when piped through PowerShell. Strip it
+    // here so the API key cleanly fits into the HTTP header ByteString.
+    const rawKey = process.env.ANTHROPIC_API_KEY || '';
+    const key = rawKey.replace(/^﻿/, '').trim();
     if (!key) { res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' }); return; }
 
     let body = req.body;
