@@ -475,7 +475,7 @@ const manageModal = {
     el: null, titleEl: null, subtitleEl: null,
     viewChoice: null, viewEdit: null, footerChoice: null, footerEdit: null,
     errChoice: null, errEdit: null,
-    softBtn: null, hardBtn: null, modifyBtn: null,
+    softBtn: null, hardBtn: null, modifyBtn: null, deletePatientBtn: null,
     cancelBtn: null, closeBtn: null, saveBtn: null, backBtn: null,
     nameInput: null, phoneInput: null, symptomsInput: null,
     dateInput: null, timeInput: null,
@@ -494,6 +494,7 @@ function manageModalInit() {
     manageModal.errEdit      = document.getElementById('manage-edit-error');
     manageModal.softBtn      = document.getElementById('btn-soft-delete');
     manageModal.hardBtn      = document.getElementById('btn-hard-delete');
+    manageModal.deletePatientBtn = document.getElementById('btn-delete-patient');
     manageModal.modifyBtn    = document.getElementById('btn-modify');
     manageModal.cancelBtn    = document.getElementById('btn-manage-cancel');
     manageModal.closeBtn     = document.getElementById('manage-modal-close');
@@ -508,6 +509,7 @@ function manageModalInit() {
     manageModal.modifyBtn.addEventListener('click', enterEditView);
     manageModal.softBtn.addEventListener('click',   () => performDelete('soft'));
     manageModal.hardBtn.addEventListener('click',   () => performDelete('hard'));
+    manageModal.deletePatientBtn.addEventListener('click', performDeletePatient);
     manageModal.saveBtn.addEventListener('click',   saveEdit);
     manageModal.backBtn.addEventListener('click',   enterChoiceView);
     manageModal.cancelBtn.addEventListener('click', closeManageModal);
@@ -562,7 +564,8 @@ function enterChoiceView() {
     manageModal.errEdit.hidden      = true;
     // Reset any in-flight button label tweaks.
     manageModal.softBtn.textContent = '📦 보관 후 숨기기';
-    manageModal.hardBtn.textContent = '🗑 완전 삭제';
+    manageModal.hardBtn.textContent = '🗑 완전 삭제 (이 예약만)';
+    manageModal.deletePatientBtn.textContent = '🧹 환자 완전 삭제 (모든 기록)';
 }
 
 function enterEditView() {
@@ -580,6 +583,7 @@ function enterEditView() {
 
 function setManageButtonsDisabled(disabled) {
     [manageModal.softBtn, manageModal.hardBtn, manageModal.modifyBtn,
+     manageModal.deletePatientBtn,
      manageModal.cancelBtn, manageModal.saveBtn, manageModal.backBtn]
         .forEach(b => { if (b) b.disabled = !!disabled; });
 }
@@ -607,6 +611,47 @@ async function performDelete(kind) {
         manageModal.errChoice.hidden = false;
         manageModal.errChoice.textContent = '실패: ' + ((e && e.message) ? e.message : e);
         targetBtn.textContent = originalLabel;
+        setManageButtonsDisabled(false);
+    }
+}
+
+// Wipe a patient entirely: every appointment, AI diagnosis, and (via ON DELETE
+// CASCADE) vital_records + patient_lightning_state, then the patients row
+// itself. This is what makes a returning patient show up as brand-new — the
+// first-visit content lives on patients.symptoms, which per-appointment delete
+// leaves behind. Irreversible, so it's confirm-gated.
+async function performDeletePatient() {
+    const patientId = manageModal.patientId;
+    const name = manageModal.name || '(이름 없음)';
+    if (!patientId) return;
+    const ok = window.confirm(
+        `'${name}' 환자의 모든 기록(예약·증상·AI 진단·측정값)과 환자 정보를 ` +
+        `완전히 삭제합니다.\n되돌릴 수 없습니다. 계속할까요?`);
+    if (!ok) return;
+
+    setManageButtonsDisabled(true);
+    const btn = manageModal.deletePatientBtn;
+    const orig = btn.textContent;
+    btn.textContent = '삭제 중…';
+    try {
+        const client = await initSupabase();
+        // Children whose FK isn't guaranteed to cascade — remove explicitly,
+        // oldest-dependency first. vital_records & patient_lightning_state are
+        // ON DELETE CASCADE, so the patients delete sweeps those up.
+        let r;
+        r = await client.from('ai_diagnoses').delete().eq('patient_id', patientId);
+        if (r.error) throw r.error;
+        r = await client.from('appointments').delete().eq('patient_id', patientId);
+        if (r.error) throw r.error;
+        r = await client.from('patients').delete().eq('id', patientId);
+        if (r.error) throw r.error;
+        closeManageModal();
+        await refresh();
+    } catch (e) {
+        console.error(e);
+        manageModal.errChoice.hidden = false;
+        manageModal.errChoice.textContent = '환자 삭제 실패: ' + ((e && e.message) ? e.message : e);
+        btn.textContent = orig;
         setManageButtonsDisabled(false);
     }
 }

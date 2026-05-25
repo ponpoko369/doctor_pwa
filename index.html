@@ -76,8 +76,12 @@
                     <p class="delete-option-desc">‘취소됨(cancelled)’으로 표시되어 화면에서만 사라집니다. DB엔 보존(감사·복구용).</p>
                 </div>
                 <div class="delete-option">
-                    <button type="button" class="btn-delete-hard" id="btn-hard-delete">🗑 완전 삭제</button>
-                    <p class="delete-option-desc">DB에서 영구 제거됩니다. <strong>복구 불가능</strong>.</p>
+                    <button type="button" class="btn-delete-hard" id="btn-hard-delete">🗑 완전 삭제 (이 예약만)</button>
+                    <p class="delete-option-desc">이 예약 1건만 DB에서 영구 제거. 환자 정보·증상은 남습니다. <strong>복구 불가능</strong>.</p>
+                </div>
+                <div class="delete-option">
+                    <button type="button" class="btn-delete-hard" id="btn-delete-patient">🧹 환자 완전 삭제 (모든 기록)</button>
+                    <p class="delete-option-desc">이 환자의 <strong>모든 기록</strong>(예약·증상·AI 진단·측정값)과 환자 정보를 DB에서 제거합니다. 재진 시 신규 환자로 취급. <strong>복구 불가능</strong>.</p>
                 </div>
                 <p class="modal-error" id="manage-modal-error" hidden></p>
             </div>
