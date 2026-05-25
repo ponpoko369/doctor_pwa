@@ -292,26 +292,6 @@ main {
     border-color: var(--primary);
 }
 
-/* Explicit "view 3D acupoints" button — only rendered on rows whose patient
-   has an AI diagnosis on file. Filled accent style so it clearly invites a click. */
-.btn-3d {
-    flex: 0 0 auto;
-    background: var(--primary);
-    color: #fff;
-    border: none;
-    border-radius: 0.4rem;
-    padding: 0.25rem 0.55rem;
-    cursor: pointer;
-    font-size: 0.8rem;
-    font-weight: 700;
-    line-height: 1;
-    font-family: inherit;
-    white-space: nowrap;
-    transition: background 0.15s ease, transform 0.1s ease;
-}
-.btn-3d:hover  { background: var(--primary-dark); }
-.btn-3d:active { transform: scale(0.96); }
-
 .visit-badge {
     display: inline-block;
     background: var(--bg);
@@ -354,6 +334,14 @@ main {
     opacity: 0.7;
     margin-left: 0.25rem;
 }
+/* Mark a diagnosed (clickable → 3D viewer) row by painting an accent border
+   around it, instead of an in-row button that would crowd the name. */
+.appt-table tr.has-diag td {
+    border-top: 2px solid var(--primary);
+    border-bottom: 2px solid var(--primary);
+}
+.appt-table tr.has-diag td:first-child { border-left: 2px solid var(--primary); }
+.appt-table tr.has-diag td:last-child  { border-right: 2px solid var(--primary); }
 
 .loading, .empty {
     text-align: center;
