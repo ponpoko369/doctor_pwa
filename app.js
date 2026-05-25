@@ -229,15 +229,24 @@ function render({ rows }) {
                          title="전체 증상 보기">📋</button>
                </div>`
             : '<span class="muted">—</span>';
+        // data-* lets the delegated click handler open the right viewer.
+        const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
+        // Explicit "view 3D acupoints" button — shown only for patients whose
+        // AI diagnosis is on file (hasDiag). Opens the same viewer the whole
+        // row links to, but gives a clear, obvious affordance.
+        const view3dBtn = hasDiag
+            ? `<button type="button" class="btn-3d"
+                         data-viewer-url="${viewerHref}"
+                         title="AI 진단 3D 침자리 보기">🧍 3D</button>`
+            : '';
         const nameCell = `<div class="name-row">
                  <span class="name-text">${escapeHtml(name)}</span>
                  <button type="button" class="btn-manage"
                          data-appt-id="${escapeHtml(a.id)}"
                          data-name="${escapeHtml(name)}"
                          title="수정 / 삭제">✏️</button>
+                 ${view3dBtn}
                </div>`;
-        // data-* lets the delegated click handler open the right viewer.
-        const viewerHref = hasDiag ? escapeHtml(viewerUrl(a)) : '';
         // data-search holds a diacritic-stripped lowercased haystack the
         // live filter scans against (name + phone + symptoms + cached KO
         // translation). Normalized once at render so the input handler can
@@ -456,6 +465,13 @@ function onTableClick(e) {
     // Don't hijack the in-row buttons — each handles its own click below.
     if (e.target.closest('.btn-symptom')) return;
     if (e.target.closest('.btn-manage'))  return;
+    // Explicit 3D button → open its viewer URL in a new tab.
+    const btn3d = e.target.closest('.btn-3d');
+    if (btn3d) {
+        const u = btn3d.dataset.viewerUrl;
+        if (u) window.open(u, '_blank', 'noopener');
+        return;
+    }
     const tr = e.target.closest('tr');
     if (!tr) return;
     const url = tr.dataset.viewerUrl;
