@@ -136,6 +136,32 @@
         }
         html += '</div>';
       }
+      // Herbal prescription — rendered under the acupoints. Columns are added
+      // by the supabase migration; older rows simply have no herbs and this
+      // block is skipped.
+      const herbs = Array.isArray(d.herbs) ? d.herbs : [];
+      if (herbs.length) {
+        const HC = '#5BE0A0';
+        html += '<div class="sb-section"><h4>'
+              + '<span class="dot" style="background:'+HC+'"></span>'
+              + '한약 처방 (' + herbs.length + ')</h4>';
+        const formula = d.formula_ko || d.formula || '';
+        if (formula) {
+          html += '<div style="font-size:11px;font-style:italic;color:#B9C4D6;margin:-2px 0 6px">'
+                + escapeHtml(formula) + '</div>';
+        }
+        for (const h of herbs) {
+          const reasonKo = h.reason_ko || h.reason || '—';
+          const meta = [h.role, h.dosage].filter(Boolean).map(escapeHtml).join(' · ');
+          html += '<div class="acu-row">'
+                + '<span class="id" style="flex:0 0 78px;color:'+HC+';border:1px solid '+HC+'88;background:'+HC+'22">' + escapeHtml(h.id) + '</span>'
+                + '<span class="reason">'
+                + (meta ? '<b style="color:'+HC+'">' + meta + '</b><br>' : '')
+                + escapeHtml(reasonKo) + '</span>'
+                + '</div>';
+        }
+        html += '</div>';
+      }
       sb.innerHTML = html;
     }
 
