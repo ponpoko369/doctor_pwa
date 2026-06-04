@@ -12,6 +12,8 @@
 const MODEL = 'claude-haiku-4-5-20251001';
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_INPUT_CHARS = 4000;   // refuse pathologically long inputs
+const FETCH_TIMEOUT_MS = 25_000; // abort a hung Anthropic call instead of
+                                 // riding out the function's full duration
 
 module.exports = async (req, res) => {
     // Same-origin only in normal use, but keep CORS open for dev/preview.
@@ -40,9 +42,12 @@ module.exports = async (req, res) => {
         res.status(413).json({ error: `text too long (>${MAX_INPUT_CHARS} chars)` }); return;
     }
 
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
         const resp = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
+            signal: ctrl.signal,
             headers: {
                 'x-api-key': key,
                 'anthropic-version': ANTHROPIC_VERSION,
@@ -81,6 +86,16 @@ module.exports = async (req, res) => {
         }
         res.status(200).json({ translation });
     } catch (e) {
+        if (ctrl.signal.aborted) {
+            res.status(504).json({ error: `anthropic timeout after ${FETCH_TIMEOUT_MS}ms` });
+            return;
+        }
         res.status(500).json({ error: String(e && e.message ? e.message : e) });
+    } finally {
+        clearTimeout(timer);
     }
 };
+
+// Node runtime — maxDuration IS honored here (unlike the edge functions).
+// 30s = fetch timeout (25s) + parse/respond headroom.
+module.exports.config = { maxDuration: 30 };
