@@ -10,21 +10,24 @@
 // POST /api/whatsapp   — Inbound messages + status updates.
 //
 // Meta gives us ~5 seconds before it considers the webhook failed and
-// retries. The P1 work (Supabase read/write + one Meta API send) runs in
-// well under that, so we just await before responding. When Claude lands
-// in P2 we'll switch to `waitUntil` from `@vercel/functions`.
+// retries. This function therefore does ONLY verify + parse + dispatch:
+// the Claude+MCP work runs in /api/process (Node runtime, real maxDuration),
+// which we self-invoke over HTTP. Once that request reaches the Node
+// function, its invocation runs to completion even if this Edge isolate is
+// reclaimed — which is what used to make replies arrive minutes late or
+// never when the heavy work lived in ctx.waitUntil here.
 
 export const config = {
     runtime: 'edge',
-    // Edge Functions on Hobby cap at ~25-30s; setting maxDuration is a no-op
-    // beyond the plan limit but signals intent and lets Pro upgrades take
-    // effect with no code change. Claude+MCP p50 is 5-10s, p99 (cold start
-    // + cache miss + slow MCP) can be 15-20s.
-    maxDuration: 60,
+    // NO maxDuration here, on purpose. maxDuration is a Node-runtime-only
+    // setting — on runtime:'edge' Vercel silently ignores it, which is how
+    // we got "Task timed out after 300 seconds" (the platform default
+    // ceiling) despite a maxDuration:60 sitting right here. The worker's
+    // budget lives in api/process.mjs (maxDuration: 90) where it's honored.
 };
 
 import { verifySignature, parseInbound } from '../lib/wa.mjs';
-import { handleInbound } from '../lib/handle.mjs';
+import { fetchWithTimeout } from '../lib/http.mjs';
 
 function json(obj, status = 200) {
     return new Response(JSON.stringify(obj), {
@@ -69,31 +72,48 @@ export default async function handler(req, ctx) {
     try { body = JSON.parse(raw); }
     catch { return json({ error: 'bad json' }, 400); }
 
-    // Dispatch each inbound text. Wrapped so a single failing message
-    // doesn't kill the others.
+    // ── Dispatch to the Node worker ────────────────────────────────────────
+    // Hand the parsed messages to /api/process and return 200 to Meta now.
+    // waitUntil only needs to keep us alive long enough for the dispatch
+    // request to be DELIVERED (~100ms); after that the Node invocation
+    // finishes on its own even if this isolate dies. We still hold the
+    // connection for the worker's full run when we can — it's free and the
+    // response tells us in the logs whether processing succeeded.
     const inbound = parseInbound(body);
-    const work = Promise.allSettled(
-        inbound.map(async (m) => {
-            try { await handleInbound(m); }
-            catch (e) { console.error('[wa] handle error', m.waMessageId, e); }
-        }),
-    );
+    if (!inbound.length) return json({ ok: true });
 
-    // Background execution. Meta's webhook deadline is 5s — Claude+MCP can
-    // take 10-20s on the slow path, so we MUST return 200 before that work
-    // finishes. ctx.waitUntil keeps the Edge isolate alive after the
-    // response so the work continues running.
-    //
-    // Fallback: if ctx isn't passed (some Vercel Edge configs), we fire-
-    // and-forget by attaching `.catch` and NOT awaiting. The isolate may
-    // still get GC'd mid-flight — that's exactly the failure mode the user
-    // saw, and it's why handleInbound now sends an immediate ack so the
-    // patient at least knows the message was received.
+    const token = (process.env.MCP_AUTH_TOKEN || '').replace(/^﻿/, '').trim();
+    const dispatchOnce = () => fetchWithTimeout(
+        `${url.origin}/api/process`,
+        {
+            method: 'POST',
+            headers: {
+                'content-type': 'application/json',
+                authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ messages: inbound }),
+        },
+        // Just above the worker's maxDuration (90s) — this should only ever
+        // fire if the worker itself was killed without responding.
+        95_000,
+        'dispatch /api/process',
+    );
+    // One retry for a transient network failure on the handoff. Retrying
+    // after the worker already logged the inbound is harmless — the
+    // wa_message_id dedup in handle.mjs turns the rerun into a no-op.
+    const dispatch = dispatchOnce()
+        .catch((e) => {
+            console.warn('[wa] dispatch retry after:', e && e.message ? e.message : e);
+            return dispatchOnce();
+        })
+        .catch((e) => console.error('[wa] dispatch failed twice:', e && e.message ? e.message : e));
+
     if (ctx && typeof ctx.waitUntil === 'function') {
-        ctx.waitUntil(work);
+        ctx.waitUntil(dispatch);
     } else {
-        console.warn('[wa] ctx.waitUntil unavailable — fire-and-forget mode');
-        work.catch((e) => console.error('[wa] background error', e));
+        // Risky mode: the isolate may die before the request leaves. The
+        // worker + dedup still make an eventual Meta retry safe to process.
+        console.warn('[wa] ctx.waitUntil unavailable — fire-and-forget dispatch');
     }
     return json({ ok: true });
 }
