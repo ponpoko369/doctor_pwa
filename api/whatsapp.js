@@ -14,7 +14,14 @@
 // well under that, so we just await before responding. When Claude lands
 // in P2 we'll switch to `waitUntil` from `@vercel/functions`.
 
-export const config = { runtime: 'edge' };
+export const config = {
+    runtime: 'edge',
+    // Edge Functions on Hobby cap at ~25-30s; setting maxDuration is a no-op
+    // beyond the plan limit but signals intent and lets Pro upgrades take
+    // effect with no code change. Claude+MCP p50 is 5-10s, p99 (cold start
+    // + cache miss + slow MCP) can be 15-20s.
+    maxDuration: 60,
+};
 
 import { verifySignature, parseInbound } from '../lib/wa.mjs';
 import { handleInbound } from '../lib/handle.mjs';
@@ -72,13 +79,21 @@ export default async function handler(req, ctx) {
         }),
     );
 
-    // P1: the dispatch is fast (1-2 Supabase RTs + 1 Meta send), well inside
-    // Meta's 5s ack window — just await. P2 adds Claude and we'll move this
-    // under ctx.waitUntil(work) before responding.
+    // Background execution. Meta's webhook deadline is 5s — Claude+MCP can
+    // take 10-20s on the slow path, so we MUST return 200 before that work
+    // finishes. ctx.waitUntil keeps the Edge isolate alive after the
+    // response so the work continues running.
+    //
+    // Fallback: if ctx isn't passed (some Vercel Edge configs), we fire-
+    // and-forget by attaching `.catch` and NOT awaiting. The isolate may
+    // still get GC'd mid-flight — that's exactly the failure mode the user
+    // saw, and it's why handleInbound now sends an immediate ack so the
+    // patient at least knows the message was received.
     if (ctx && typeof ctx.waitUntil === 'function') {
         ctx.waitUntil(work);
     } else {
-        await work;
+        console.warn('[wa] ctx.waitUntil unavailable — fire-and-forget mode');
+        work.catch((e) => console.error('[wa] background error', e));
     }
     return json({ ok: true });
 }
