@@ -1,99 +1,69 @@
-// WhatsApp Cloud API webhook.
+// WhatsApp Cloud API webhook — Edge Runtime.
+//
+// We need Edge specifically because Vercel's Node runtime auto-parses the
+// JSON body before our handler runs, which destroys the exact bytes Meta
+// signed and makes HMAC-SHA256 verification impossible. Edge gives us a
+// standard Request object, so `await req.text()` returns the raw signed
+// payload byte-for-byte.
 //
 // GET  /api/whatsapp   — Meta verification handshake.
 // POST /api/whatsapp   — Inbound messages + status updates.
 //
-// Meta gives us ~5 seconds before it considers the webhook failed and retries.
-// We acknowledge with 200 immediately and do the actual work (signature check,
-// Claude call, reply send) under Vercel's `waitUntil` so the function instance
-// stays alive after the response. Failures inside that background work are
-// logged but don't surface to Meta as failures — that's the point, otherwise
-// we'd get duplicate retries.
+// Meta gives us ~5 seconds before it considers the webhook failed and
+// retries. The P1 work (Supabase read/write + one Meta API send) runs in
+// well under that, so we just await before responding. When Claude lands
+// in P2 we'll switch to `waitUntil` from `@vercel/functions`.
 
-const { verifySignature, parseInbound } = require('../lib/wa');
-const { handleInbound } = require('../lib/handle');
+export const config = { runtime: 'edge' };
 
-/**
- * Raw body reader — HMAC must be computed over the *exact bytes* Meta signed.
- * Vercel's behavior depends on Content-Type and plan, so try every shape:
- *   1) req.rawBody (newer Vercel runtimes expose this Buffer)
- *   2) req.body as string / Buffer (translate.js shows we sometimes get this)
- *   3) Stream read via 'data' events (raw IncomingMessage)
- * If req.body is already a parsed object, the raw bytes are gone and HMAC
- * will fail — that's why we don't fall back to JSON.stringify(req.body).
- */
-async function readRawBody(req) {
-    if (req.rawBody) {
-        return Buffer.isBuffer(req.rawBody)
-            ? req.rawBody.toString('utf8')
-            : String(req.rawBody);
-    }
-    if (typeof req.body === 'string') return req.body;
-    if (Buffer.isBuffer(req.body)) return req.body.toString('utf8');
-    if (req.body && typeof req.body === 'object') {
-        // Body was pre-parsed — raw bytes lost. Signal failure so the caller
-        // returns 401 rather than silently mis-verifying.
-        return null;
-    }
-    return new Promise((resolve, reject) => {
-        const chunks = [];
-        req.on('data', (c) => chunks.push(c));
-        req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        req.on('error', reject);
+import { verifySignature, parseInbound } from '../lib/wa.mjs';
+import { handleInbound } from '../lib/handle.mjs';
+
+function json(obj, status = 200) {
+    return new Response(JSON.stringify(obj), {
+        status,
+        headers: { 'content-type': 'application/json' },
     });
 }
 
-module.exports = async (req, res) => {
+export default async function handler(req, ctx) {
+    const url = new URL(req.url);
+
     // ── GET: verification handshake ────────────────────────────────────────
     if (req.method === 'GET') {
-        const mode = req.query['hub.mode'];
-        const token = req.query['hub.verify_token'];
-        const challenge = req.query['hub.challenge'];
+        const mode = url.searchParams.get('hub.mode');
+        const token = url.searchParams.get('hub.verify_token');
+        const challenge = url.searchParams.get('hub.challenge') || '';
 
         const expected = (process.env.WA_VERIFY_TOKEN || '').replace(/^﻿/, '').trim();
         if (mode === 'subscribe' && token && token === expected) {
-            res.status(200).send(challenge);
-            return;
+            return new Response(challenge, {
+                status: 200,
+                headers: { 'content-type': 'text/plain' },
+            });
         }
-        res.status(403).send('forbidden');
-        return;
+        return new Response('forbidden', { status: 403 });
     }
 
-    if (req.method !== 'POST') {
-        res.status(405).json({ error: 'method' });
-        return;
-    }
+    if (req.method !== 'POST') return json({ error: 'method' }, 405);
 
     // ── POST: messages ─────────────────────────────────────────────────────
-    let raw;
-    try { raw = await readRawBody(req); }
-    catch (e) { res.status(400).json({ error: 'body read' }); return; }
+    // req.text() returns the exact bytes Meta signed. Don't req.json() first
+    // or any preprocessing — the HMAC must be computed over the original.
+    const raw = await req.text();
+    const signature = req.headers.get('x-hub-signature-256');
 
-    if (raw === null) {
-        // Body was pre-parsed by the runtime; we can't HMAC it. Tell ops
-        // exactly what to fix in vercel.json / runtime config.
-        console.error('[wa] body was pre-parsed; HMAC unavailable');
-        res.status(500).json({ error: 'body pre-parsed' });
-        return;
-    }
-
-    const signature = req.headers['x-hub-signature-256'];
-    if (!verifySignature(raw, signature)) {
+    if (!(await verifySignature(raw, signature))) {
         // Don't tell the caller why — security hygiene.
-        res.status(401).json({ error: 'bad signature' });
-        return;
+        return json({ error: 'bad signature' }, 401);
     }
 
     let body;
     try { body = JSON.parse(raw); }
-    catch { res.status(400).json({ error: 'bad json' }); return; }
+    catch { return json({ error: 'bad json' }, 400); }
 
-    // Acknowledge Meta immediately. Anything that takes more than ~5s in here
-    // would trigger retries and duplicate replies.
-    res.status(200).json({ ok: true });
-
-    // Background: dispatch each inbound text. Wrapped so a single failing
-    // message doesn't kill the others.
+    // Dispatch each inbound text. Wrapped so a single failing message
+    // doesn't kill the others.
     const inbound = parseInbound(body);
     const work = Promise.allSettled(
         inbound.map(async (m) => {
@@ -102,9 +72,13 @@ module.exports = async (req, res) => {
         }),
     );
 
-    // Vercel: `waitUntil` keeps the function alive past the response so the
-    // background promise can finish. In other Node envs this is a no-op.
-    const ctx = (req && req.waitUntil) || (res && res.waitUntil);
-    if (typeof ctx === 'function') ctx.call(req || res, work);
-    else await work;  // local dev fallback
-};
+    // P1: the dispatch is fast (1-2 Supabase RTs + 1 Meta send), well inside
+    // Meta's 5s ack window — just await. P2 adds Claude and we'll move this
+    // under ctx.waitUntil(work) before responding.
+    if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(work);
+    } else {
+        await work;
+    }
+    return json({ ok: true });
+}
