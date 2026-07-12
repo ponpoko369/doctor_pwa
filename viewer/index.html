@@ -18,7 +18,7 @@
     }
     #viewer-area { display:flex; flex:1 1 auto; min-height:0; order:1; }
     #patient-meta {
-      flex:0 0 150px; padding:14px 10px; background:#0F1320;
+      flex:0 0 75px; padding:14px 8px; background:#0F1320;
       border-right:1px solid #1F2940; font-size:11px; color:#7A8CAA;
     }
     #patient-meta .label { margin-bottom:4px; font-family:Consolas, monospace; }
@@ -841,7 +841,7 @@
           const dt = new Date(d.created_at);
           const pad = n => String(n).padStart(2, '0');
           document.getElementById('topbar-meta').textContent =
-            '진단일: ' + dt.getFullYear() + '-' + pad(dt.getMonth()+1) + '-' + pad(dt.getDate())
+            dt.getFullYear() + '-' + pad(dt.getMonth()+1) + '-' + pad(dt.getDate())
             + ' ' + pad(dt.getHours()) + ':' + pad(dt.getMinutes());
         } catch (_) {}
         renderSidebar(d);
