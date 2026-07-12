@@ -53,6 +53,9 @@ THREE.OrbitControls = function ( object, domElement ) {
 	this.noPan = false;
 	this.keyPanSpeed = 7.0;	// pixels moved per arrow key push
 
+	// Lets touch UIs toggle one-finger dragging between orbit and pan.
+	this.touchOnePan = false;
+
 	// Set to true to automatically rotate around the target
 	this.autoRotate = false;
 	this.autoRotateSpeed = 2.0; // 30 seconds per round when fps is 60
@@ -560,6 +563,16 @@ THREE.OrbitControls = function ( object, domElement ) {
 
 			case 1:	// one-fingered touch: rotate
 
+				if ( scope.touchOnePan === true ) {
+
+					if ( scope.noPan === true ) return;
+
+					state = STATE.TOUCH_PAN;
+					panStart.set( event.touches[ 0 ].pageX, event.touches[ 0 ].pageY );
+					break;
+
+				}
+
 				if ( scope.noRotate === true ) return;
 
 				state = STATE.TOUCH_ROTATE;
@@ -610,6 +623,23 @@ THREE.OrbitControls = function ( object, domElement ) {
 		switch ( event.touches.length ) {
 
 			case 1: // one-fingered touch: rotate
+
+				if ( scope.touchOnePan === true ) {
+
+					if ( scope.noPan === true ) return;
+					if ( state !== STATE.TOUCH_PAN ) return;
+
+					panEnd.set( event.touches[ 0 ].pageX, event.touches[ 0 ].pageY );
+					panDelta.subVectors( panEnd, panStart );
+
+					scope.pan( panDelta.x, panDelta.y );
+
+					panStart.copy( panEnd );
+
+					scope.update();
+					break;
+
+				}
 
 				if ( scope.noRotate === true ) return;
 				if ( state !== STATE.TOUCH_ROTATE ) return;

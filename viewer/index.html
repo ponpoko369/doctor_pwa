@@ -75,6 +75,7 @@
         <span class="title" id="topbar-name">환자</span>
         <div class="label">진단일</div>
         <span class="meta" id="topbar-meta">불러오는 중…</span>
+        <button id="btn-pan">이동: 끔</button>
         <button id="btn-tour" disabled>🎬 투어</button>
       </aside>
       <div id="stage"><div id="status">3D 모델 로딩…</div></div>
@@ -606,6 +607,12 @@
     controls.maxDistance = 700;
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
+
+    const panButton = document.getElementById('btn-pan');
+    panButton.onclick = () => {
+      controls.touchOnePan = !controls.touchOnePan;
+      panButton.textContent = controls.touchOnePan ? '이동: 켬' : '이동: 끔';
+    };
 
     scene.add(new THREE.AmbientLight(0x202040));
     const lightFront = new THREE.DirectionalLight(0xffeedd, 1.0);
