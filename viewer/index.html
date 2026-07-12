@@ -16,7 +16,21 @@
       font-size: 12px; line-height: 1.45;
       order:2;
     }
-    #stage { flex:1 1 auto; min-height:0; position:relative; background:#0F1320; order:1; }
+    #viewer-area { display:flex; flex:1 1 auto; min-height:0; order:1; }
+    #patient-meta {
+      flex:0 0 150px; padding:14px 10px; background:#0F1320;
+      border-right:1px solid #1F2940; font-size:11px; color:#7A8CAA;
+    }
+    #patient-meta .label { margin-bottom:4px; font-family:Consolas, monospace; }
+    #patient-meta .title { display:block; margin-bottom:14px; color:#E4ECF8; font-size:13px; font-weight:700; word-break:break-word; }
+    #patient-meta .meta { display:block; margin-bottom:14px; line-height:1.45; }
+    #patient-meta button {
+      width:100%; background:#1F2940; color:#E4ECF8; border:none;
+      padding:6px; border-radius:4px; cursor:pointer; font:inherit;
+    }
+    #patient-meta button:hover { background:#2960C8; }
+    #patient-meta button:disabled { color:#445270; cursor:default; }
+    #stage { flex:1 1 auto; min-width:0; position:relative; background:#0F1320; }
     #stage canvas { display:block; }
     #status {
       position:absolute; left:8px; bottom:8px;
@@ -24,25 +38,6 @@
       background:rgba(0,0,0,0.5); padding:3px 8px; border-radius:3px;
       pointer-events:none;
     }
-    /* top bar */
-    .topbar {
-      position:absolute; top:0; left:0; right:0;
-      display:flex; align-items:center; gap:8px;
-      padding: 8px 10px;
-      background: rgba(15, 19, 32, 0.82);
-      border-bottom: 1px solid #1F2940;
-      font-size: 12px;
-      z-index: 5;
-    }
-    .topbar .title { font-weight:600; color:#E4ECF8; }
-    .topbar .meta  { color:#7A8CAA; font-size:11px; }
-    .topbar .spacer { flex: 1; }
-    .topbar button {
-      background:#1F2940; color:#E4ECF8; border:none;
-      padding: 6px 10px; border-radius:4px; cursor:pointer; font: inherit;
-    }
-    .topbar button:hover { background:#2960C8; }
-    .topbar button:disabled { color:#445270; cursor:default; background:#1F2940; }
     /* sidebar */
     .sb-header { color:#00DDFF; font-weight:700; margin-bottom: 6px; font-size: 12px; }
     .sb-pattern { color:#E4ECF8; margin-bottom: 14px; }
@@ -74,15 +69,15 @@
     <aside id="sidebar">
       <div id="sb-content">불러오는 중…</div>
     </aside>
-    <div id="stage">
-      <div class="topbar">
+    <div id="viewer-area">
+      <aside id="patient-meta">
+        <div class="label">환자</div>
         <span class="title" id="topbar-name">환자</span>
-        <span class="meta"  id="topbar-meta"></span>
-        <span class="spacer"></span>
+        <div class="label">진단일</div>
+        <span class="meta" id="topbar-meta">불러오는 중…</span>
         <button id="btn-tour" disabled>🎬 투어</button>
-        <button id="btn-back">← 돌아가기</button>
-      </div>
-      <div id="status">3D 모델 로딩…</div>
+      </aside>
+      <div id="stage"><div id="status">3D 모델 로딩…</div></div>
     </div>
   </div>
 
@@ -103,7 +98,6 @@
     const patientName = params.get('name') || '환자';
 
     document.getElementById('topbar-name').textContent = patientName;
-    document.getElementById('btn-back').onclick = () => history.back();
 
     function escapeHtml(s) {
       return String(s).replace(/[&<>"']/g, c => ({
