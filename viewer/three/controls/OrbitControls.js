@@ -567,13 +567,20 @@ THREE.OrbitControls = function ( object, domElement ) {
 				rotateStart.set( event.touches[ 0 ].pageX, event.touches[ 0 ].pageY );
 				break;
 
-			case 2:	// two-fingered touch: pan
+			case 2:	// two-fingered touch: dolly and pan
 
-				if ( scope.noPan === true ) return;
+				if ( scope.noZoom === true && scope.noPan === true ) return;
 
-				state = STATE.TOUCH_PAN;
+				state = STATE.TOUCH_DOLLY;
 
-				panStart.set( event.touches[ 0 ].pageX, event.touches[ 0 ].pageY );
+				var dx = event.touches[ 0 ].pageX - event.touches[ 1 ].pageX;
+				var dy = event.touches[ 0 ].pageY - event.touches[ 1 ].pageY;
+				var distance = Math.sqrt( dx * dx + dy * dy );
+				dollyStart.set( 0, distance );
+				panStart.set(
+					( event.touches[ 0 ].pageX + event.touches[ 1 ].pageX ) / 2,
+					( event.touches[ 0 ].pageY + event.touches[ 1 ].pageY ) / 2
+				);
 				break;
 
 			case 3: // three-fingered touch: pan
@@ -624,17 +631,46 @@ THREE.OrbitControls = function ( object, domElement ) {
 				scope.update();
 				break;
 
-			case 2: // two-fingered touch: pan
+			case 2: // two-fingered touch: dolly and pan
 
-				if ( scope.noPan === true ) return;
-				if ( state !== STATE.TOUCH_PAN ) return;
+				if ( state !== STATE.TOUCH_DOLLY ) return;
 
-				panEnd.set( event.touches[ 0 ].pageX, event.touches[ 0 ].pageY );
-				panDelta.subVectors( panEnd, panStart );
+				var dx = event.touches[ 0 ].pageX - event.touches[ 1 ].pageX;
+				var dy = event.touches[ 0 ].pageY - event.touches[ 1 ].pageY;
+				var distance = Math.sqrt( dx * dx + dy * dy );
 
-				scope.pan( panDelta.x, panDelta.y );
+				if ( scope.noZoom === false ) {
 
-				panStart.copy( panEnd );
+					dollyEnd.set( 0, distance );
+					dollyDelta.subVectors( dollyEnd, dollyStart );
+
+					if ( dollyDelta.y > 0 ) {
+
+						scope.dollyOut();
+
+					} else if ( dollyDelta.y < 0 ) {
+
+						scope.dollyIn();
+
+					}
+
+					dollyStart.copy( dollyEnd );
+
+				}
+
+				if ( scope.noPan === false ) {
+
+					panEnd.set(
+						( event.touches[ 0 ].pageX + event.touches[ 1 ].pageX ) / 2,
+						( event.touches[ 0 ].pageY + event.touches[ 1 ].pageY ) / 2
+					);
+					panDelta.subVectors( panEnd, panStart );
+
+					scope.pan( panDelta.x, panDelta.y );
+
+					panStart.copy( panEnd );
+
+				}
 
 				scope.update();
 				break;
