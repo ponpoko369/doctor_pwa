@@ -7,15 +7,16 @@
   <style>
     html, body { margin:0; padding:0; height:100%; background:#0F1320; overflow:hidden; color:#E4ECF8;
                  font-family:'Inter','Segoe UI',sans-serif; }
-    /* Layout: left side panel (diagnosis text) + main canvas area */
-    #app { display:flex; height:100vh; height:100dvh; }
+    /* Keep the anatomical model prominent, then show its AI explanation. */
+    #app { display:flex; flex-direction:column; height:100vh; height:100dvh; }
     #sidebar {
-      width: 320px; flex: 0 0 320px;
-      background:#0F1320; border-right:1px solid #1F2940;
+      width:100%; flex:0 0 38%; min-height:180px;
+      background:#0F1320; border-top:1px solid #1F2940;
       padding: 12px; overflow-y:auto;
       font-size: 12px; line-height: 1.45;
+      order:2;
     }
-    #stage { flex:1; position:relative; background:#0F1320; }
+    #stage { flex:1 1 auto; min-height:0; position:relative; background:#0F1320; order:1; }
     #stage canvas { display:block; }
     #status {
       position:absolute; left:8px; bottom:8px;
