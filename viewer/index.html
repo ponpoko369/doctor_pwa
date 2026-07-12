@@ -602,8 +602,6 @@
     stageEl.appendChild(renderer.domElement);
 
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    // Two-finger dragging pans the model instead of pinch-zooming or rotating.
-    controls.touches.TWO = THREE.TOUCH.PAN;
     controls.minDistance = 100;
     controls.maxDistance = 700;
     controls.enableDamping = true;
