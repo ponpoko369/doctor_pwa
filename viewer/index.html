@@ -8,15 +8,17 @@
     html, body { margin:0; padding:0; height:100%; background:#0F1320; overflow:hidden; color:#E4ECF8;
                  font-family:'Inter','Segoe UI',sans-serif; }
     /* Keep the anatomical model prominent, then show its AI explanation. */
-    #app { display:flex; flex-direction:column; height:100vh; height:100dvh; }
+    #app { position:relative; height:100vh; height:100dvh; overflow:hidden; }
     #sidebar {
-      width:100%; flex:0 0 38%; min-height:180px;
+      position:absolute; left:0; right:0; bottom:0; z-index:10;
+      height:33.333%; min-height:180px; box-sizing:border-box;
       background:#0F1320; border-top:1px solid #1F2940;
-      padding: 12px; overflow-y:auto;
+      padding:12px; overflow-y:auto;
       font-size: 12px; line-height: 1.45;
-      order:2;
+      transform:translateY(100%); transition:transform 220ms ease-out;
     }
-    #viewer-area { display:flex; flex:1 1 auto; min-height:0; order:1; }
+    #app.details-open #sidebar { transform:translateY(0); }
+    #viewer-area { display:flex; width:100%; height:100%; min-height:0; }
     #patient-meta {
       flex:0 0 75px; padding:14px 8px; background:#0F1320;
       border-right:1px solid #1F2940; font-size:11px; color:#7A8CAA;
@@ -24,12 +26,6 @@
     #patient-meta .label { margin-bottom:4px; font-family:Consolas, monospace; }
     #patient-meta .title { display:block; margin-bottom:14px; color:#E4ECF8; font-size:13px; font-weight:700; word-break:break-word; }
     #patient-meta .meta { display:block; margin-bottom:14px; line-height:1.45; }
-    #patient-meta button {
-      width:100%; background:#1F2940; color:#E4ECF8; border:none;
-      padding:6px; border-radius:4px; cursor:pointer; font:inherit;
-    }
-    #patient-meta button:hover { background:#2960C8; }
-    #patient-meta button:disabled { color:#445270; cursor:default; }
     #stage { flex:1 1 auto; min-width:0; position:relative; background:#0F1320; }
     #stage canvas { display:block; }
     #status {
@@ -55,6 +51,14 @@
       font-family: Consolas, monospace; font-size:10px; font-weight:700; text-align:center;
     }
     .acu-row .reason { flex:1; color:#E4ECF8; }
+    #btn-details {
+      position:absolute; right:12px; bottom:12px; z-index:11;
+      width:42px; height:42px; border:1px solid #2A3450; border-radius:50%;
+      background:#1F2940; color:#00DDFF; font-size:20px; cursor:pointer;
+      transition:bottom 220ms ease-out, background 160ms ease;
+    }
+    #btn-details:hover { background:#2960C8; color:#E4ECF8; }
+    #app.details-open #btn-details { bottom:calc(33.333% + 12px); }
     /* loading / error */
     .center-msg {
       position:absolute; inset:0;
@@ -69,14 +73,13 @@
     <aside id="sidebar">
       <div id="sb-content">불러오는 중…</div>
     </aside>
+    <button id="btn-details" title="MTC 패턴 설명" aria-expanded="false">ⓘ</button>
     <div id="viewer-area">
       <aside id="patient-meta">
         <div class="label">환자</div>
         <span class="title" id="topbar-name">환자</span>
         <div class="label">진단일</div>
         <span class="meta" id="topbar-meta">불러오는 중…</span>
-        <button id="btn-pan">이동: 끔</button>
-        <button id="btn-tour" disabled>🎬 투어</button>
       </aside>
       <div id="stage"><div id="status">3D 모델 로딩…</div></div>
     </div>
@@ -608,10 +611,10 @@
     controls.enableDamping = true;
     controls.dampingFactor = 0.1;
 
-    const panButton = document.getElementById('btn-pan');
-    panButton.onclick = () => {
-      controls.touchOnePan = !controls.touchOnePan;
-      panButton.textContent = controls.touchOnePan ? '이동: 켬' : '이동: 끔';
+    const detailsButton = document.getElementById('btn-details');
+    detailsButton.onclick = () => {
+      const isOpen = document.getElementById('app').classList.toggle('details-open');
+      detailsButton.setAttribute('aria-expanded', String(isOpen));
     };
 
     scene.add(new THREE.AmbientLight(0x202040));
@@ -681,10 +684,6 @@
         .filter(id => acuRegistry[id]).length;
       const total = primary.length + secondary.length + tertiary.length;
       statusEl.textContent = '진단 적용 · ' + hit + '/' + total + ' 침자리 강조';
-      // arm the tour button
-      const tourBtn = document.getElementById('btn-tour');
-      tourBtn.disabled = total === 0;
-      tourBtn.onclick = () => startTour([...primary, ...secondary, ...tertiary]);
     }
 
     // ---- Load body OBJ + points ---------------------------------------
