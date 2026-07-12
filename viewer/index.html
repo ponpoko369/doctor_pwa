@@ -51,8 +51,10 @@
       font-family: Consolas, monospace; font-size:10px; font-weight:700; text-align:center;
     }
     .acu-row .reason { flex:1; color:#E4ECF8; }
+    .acu-row.acu-target { cursor:pointer; border-radius:4px; }
+    .acu-row.acu-target:hover { background:#1F2940; }
     #btn-details {
-      position:absolute; right:12px; bottom:12px; z-index:11;
+      position:absolute; left:12px; bottom:12px; z-index:11;
       width:42px; height:42px; border:1px solid #2A3450; border-radius:50%;
       background:#1F2940; color:#00DDFF; font-size:20px; cursor:pointer;
       transition:bottom 220ms ease-out, background 160ms ease;
@@ -531,7 +533,7 @@
               + escapeHtml(t.label) + ' (' + t.list.length + ')</h4>';
         for (const r of t.list) {
           const reasonKo = r.reason_ko || r.reason || '—';
-          html += '<div class="acu-row">'
+          html += '<div class="acu-row acu-target" data-acu-id="'+escapeHtml(r.id)+'">'
                 + '<span class="id" title="'+escapeHtml(acuTitle(r.id))+'" style="color:'+t.dot+';border:1px solid '+t.dot+'88;background:'+t.dot+'22">' + escapeHtml(acuName(r.id)) + '</span>'
                 + '<span class="reason">' + escapeHtml(reasonKo) + '</span>'
                 + '</div>';
@@ -565,6 +567,9 @@
         html += '</div>';
       }
       sb.innerHTML = html;
+      sb.querySelectorAll('[data-acu-id]').forEach((el) => {
+        el.onclick = () => focusAcupoint(el.dataset.acuId);
+      });
     }
 
     function renderSidebarError(msg) {
@@ -764,6 +769,32 @@
       pos.y += 2;
       return { pos, target };
     }
+    function focusAcupoint(id) {
+      const stop = computeStop(id);
+      if (!stop) {
+        statusEl.textContent = '이 혈자리는 3D 모델에서 찾을 수 없습니다.';
+        return;
+      }
+      document.getElementById('app').classList.remove('details-open');
+      document.getElementById('btn-details').setAttribute('aria-expanded', 'false');
+      const entry = acuRegistry[id];
+      entry.focusUntil = performance.now() + 2200;
+      const fromPos = camera.position.clone();
+      const fromTarget = controls.target.clone();
+      const startedAt = performance.now();
+      const duration = 450;
+      controls.enabled = false;
+      function move(now) {
+        const progress = Math.min(1, (now - startedAt) / duration);
+        const k = smoothstep(progress);
+        camera.position.lerpVectors(fromPos, stop.pos, k);
+        controls.target.lerpVectors(fromTarget, stop.target, k);
+        camera.lookAt(controls.target);
+        if (progress < 1) requestAnimationFrame(move);
+        else controls.enabled = true;
+      }
+      requestAnimationFrame(move);
+    }
     function tourFlyHome() {
       tour.flying = true; tour.homing = true; tour.flyT = 0;
       tour.fromPos.copy(camera.position); tour.fromTarget.copy(controls.target);
@@ -827,13 +858,19 @@
       } else {
         controls.update();
       }
+      const now = performance.now();
       for (const id in acuRegistry) {
         const entry = acuRegistry[id];
+        const focused = entry.focusUntil && entry.focusUntil > now;
+        const style = TIER_STYLE[entry.tier] || TIER_STYLE.idle;
         for (const mesh of entry.meshes) {
           const base = mesh.userData.baseScale || 1.0;
           const amp  = mesh.userData.pulse || 0.0;
-          const s = base * (1.0 + amp * 0.18 * Math.sin(t * 4.0));
+          const s = focused
+              ? base * (1.25 + 0.45 * Math.abs(Math.sin(t * 12.0)))
+              : base * (1.0 + amp * 0.18 * Math.sin(t * 4.0));
           mesh.scale.set(s, s, s);
+          mesh.material.emissive.setHex(focused ? 0xffffff : style.emissive);
         }
       }
       renderer.render(scene, camera);
